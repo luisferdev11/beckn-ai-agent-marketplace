@@ -1,0 +1,194 @@
+# Beckn AI Agent Marketplace
+
+## IMPORTANTE: Beckn v2, NO v1
+
+Este proyecto usa **Beckn Protocol v2.0.0 exclusivamente**. La mayoria del contenido en internet sobre Beckn es de v1 — **NO aplica aqui**. Diferencias criticas:
+
+| Concepto | v1 (NO USAR) | v2 (CORRECTO) |
+|----------|-------------|---------------|
+| Busqueda | `search` / `on_search` | `discover` / `on_discover` |
+| Transaccion | `Order` | `Contract` |
+| Catalogo | Gateway broadcast en vivo | `catalog/publish` al CDS, `discover` al DS |
+| Payload | JSON plano | **JSON-LD** con `@context` y `@type` |
+| SDK | SDKs por lenguaje | **No hay SDK**. ONIX reemplaza al SDK |
+| Registry | Custom | DeDi (directorio descentralizado) |
+| Acciones | `search, select, init, confirm, track, cancel, update, rating, support, on_*` | `discover, select, init, confirm, status, track, cancel, update, rate, support, on_*` + `catalog/publish, catalog/on_publish` |
+
+**Si ves `search`, `on_search`, `Order`, o `Gateway` en documentacion o en respuestas de IA, es v1 — no lo uses.**
+
+Spec oficial v2: `../protocol-specifications-v2/api/v2.0.0/beckn.yaml` (OpenAPI 3.1.1)
+
+## Arquitectura del sistema
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                              RED BECKN                                   │
+│                                                                         │
+│   DeDi Registry (fabric.nfh.global)    CDS (fabric.nfh.global)          │
+│   - Identidades + llaves publicas      - Catalog Service (publish)      │
+│   - Endpoints de participantes         - Discovery Service (discover)   │
+│                                                                         │
+└────────────┬──────────────────────────────────┬─────────────────────────┘
+             │                                  │
+        verifica firmas                   publica/busca
+             │                                  │
+┌────────────┴──────────────────────────────────┴─────────────────────────┐
+│                         NUESTRO SISTEMA                                  │
+│                                                                         │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐               │
+│  │  ONIX-BAP    │◄──►│  ONIX-BPP    │    │    Redis     │               │
+│  │  :8081       │    │  :8082       │    │    :6379     │               │
+│  │  firma,valida│    │  firma,valida│    │    cache     │               │
+│  └──────┬───────┘    └──────┬───────┘    └─────────────┘               │
+│         │                   │                                           │
+│  ┌──────▼───────┐    ┌──────▼───────┐                                  │
+│  │BAP-MARKET-   │    │ BPP-PROVIDER │                                   │
+│  │ (BAP)        │    │  (BPP)       │                                   │
+│  │ :3001        │    │  :3002       │                                   │
+│  │              │    │              │                                   │
+│  │ Lado compra- │    │ Catalogo de  │                                   │
+│  │ dor. Recibe  │    │ agentes IA.  │                                   │
+│  │ callbacks,   │    │ Maneja con-  │                                   │
+│  │ expone API   │    │ tratos, dele-│                                   │
+│  │ al frontend  │    │ ga ejecucion │                                   │
+│  └──────────────┘    └──────┬───────┘                                  │
+│                             │                                           │
+│                      ┌──────▼───────┐                                   │
+│                      │ORCHESTRATOR  │                                   │
+│                      │ :3003        │                                   │
+│                      │ Recibe tarea,│                                   │
+│                      │ elige agente,│                                   │
+│                      │ ejecuta      │                                   │
+│                      └──────┬───────┘                                   │
+│                             │                                           │
+│                      ┌──────▼───────┐                                   │
+│                      │  AGENTS      │                                   │
+│                      │  :3004 (fut.)│                                   │
+│                      │  Agentes IA  │                                   │
+│                      │  reales      │                                   │
+│                      └──────────────┘                                   │
+│                                                                         │
+│  ┌──────────────┐                                                      │
+│  │  FRONTEND    │  (futuro — React)                                    │
+│  │  Consume API │                                                      │
+│  │  del market- │                                                      │
+│  │  place :3001 │                                                      │
+│  └──────────────┘                                                      │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+## Flujo de una transaccion Beckn v2
+
+```
+1. publish     Provider publica catalogo de agentes → CDS
+2. discover    Marketplace busca agentes en DS      → on_discover
+3. select      Marketplace elige un agente          → on_select (con precio)
+4. init        Marketplace da datos de pago         → on_init
+5. confirm     Marketplace confirma contrato        → on_confirm (provider ejecuta agente)
+6. status      Marketplace consulta resultado       → on_status (resultado del agente)
+7. rate        Marketplace califica al agente       → on_rate
+```
+
+Cada paso: **ACK sincrono + callback on_* asincrono**.
+
+## Stack
+
+- **Protocolo:** Beckn v2.0.0
+- **Middleware:** ONIX adapter (Go, imagen Docker `fidedocker/onix-adapter`)
+- **Backend:** Python 3.12 + FastAPI
+- **Modelos compartidos:** Pydantic v2 (`libs/beckn_models/`)
+- **Agentes IA:** Python (LangChain / CrewAI) — equipo separado
+- **Frontend:** React (futuro)
+- **Infra:** Redis, Docker Compose. PostgreSQL en siguiente iteracion.
+
+## Estructura del proyecto
+
+```
+beckn-ai-agent-marketplace/
+├── services/                     # Microservicios (cada uno con Dockerfile)
+│   ├── bap/                      # MARKETPLACE — lado comprador (BAP)
+│   ├── bpp/                      # PROVIDER — lado proveedor (BPP)
+│   ├── orchestrator/             # ORCHESTRATOR — ejecuta agentes IA
+│   ├── agents/                   # AGENTS — agentes IA individuales
+│   └── discovery/                # DISCOVERY SERVICE (futuro)
+├── libs/
+│   └── beckn_models/             # Modelos Pydantic compartidos
+├── schemas/                      # JSON-LD schemas del dominio AI
+├── infra/
+│   ├── docker-compose.yml        # Un solo `docker compose up --build`
+│   └── onix/                     # Configs ONIX (routing, llaves, plugins)
+├── scripts/                      # Smoke tests y utilidades
+├── docs/                         # Documentacion tecnica
+└── .claude/skills/               # Skills de Claude Code para el equipo
+```
+
+## Equipos y responsabilidades
+
+| Equipo | Carpeta | Servicio Docker | Puerto | Responsabilidad |
+|--------|---------|-----------------|--------|-----------------|
+| **Beckn/Protocol** | `services/bap/`, `services/bpp/`, `infra/` | `bap-marketplace`, `bpp-provider` | 3001, 3002 | Integracion Beckn v2, catalogo, contratos, API |
+| **Database** | `services/bap/app/db/`, `services/bpp/app/db/`, `libs/` | — | — | Persistencia (SQLite→Postgres), migraciones |
+| **Orchestrator** | `services/orchestrator/` | `orchestrator` | 3003 | Orquestacion de agentes, colas, timeouts |
+| **Agentes IA** | `services/agents/` | `agents` | 3004 | Agentes reales (summarizer, code reviewer, etc.) |
+
+## Convenciones de codigo
+
+- **Comunicacion en espanol** (codigo y docs en ingles, comunicacion en espanol)
+- Cada servicio es independiente con su propio `Dockerfile` y `requirements.txt`
+- Modelos compartidos via `libs/beckn_models/` — instalar con `pip install -e ../../libs/beckn_models`
+- Docker-first: preferimos correr en Docker, no en local
+- Variables de entorno para configuracion (no hardcodear URLs)
+- Nombres de servicios en `docker-compose.yml` deben ser descriptivos
+
+## Como ONIX interactua con nuestros servicios
+
+ONIX es un proxy que se sienta entre nuestros servicios y la red Beckn:
+
+**Cuando el marketplace (BAP) envia una accion (ej: select):**
+1. Nuestro BAP hace `POST http://onix-bap:8081/bap/caller/select`
+2. ONIX-BAP firma el mensaje con Ed25519, valida schema, resuelve ruta via DeDi
+3. ONIX-BAP envia al ONIX-BPP del destino
+4. ONIX-BPP verifica firma, valida schema, reenvia a nuestro BPP (`http://bpp-provider:3002/api/webhook/select`)
+
+**Cuando el provider (BPP) responde (ej: on_select):**
+1. Nuestro BPP hace `POST http://onix-bpp:8082/bpp/caller/on_select`
+2. ONIX-BPP firma, valida, envia al ONIX-BAP
+3. ONIX-BAP verifica, reenvia a nuestro BAP (`http://bap-marketplace:3001/api/bap-webhook/on_select`)
+
+## Credenciales actuales (testnet)
+
+Usamos credenciales pre-registradas del starter kit:
+- BAP: `bap.example.com` (llave Ed25519 en `infra/onix/bap.yaml`)
+- BPP: `bpp.example.com` (llave Ed25519 en `infra/onix/bpp.yaml`)
+- Registry: `fabric.nfh.global/registry/dedi` (DeDi, beckn.one/testnet)
+- CDS: `fabric.nfh.global/beckn/catalog` (Catalog Discovery Service)
+
+## Estado actual (Iter 0 — en progreso)
+
+### Funcionando
+- Flujo completo select → init → confirm → status con callbacks
+- Catalogo de 3 agentes IA mock (summarizer, code reviewer, data extractor)
+- Pricing real (base + 18% GST)
+- Smoke test automatizado (`python scripts/smoke_test.py`)
+- Docker compose con 6 servicios
+
+### Pendiente
+- [ ] Persistencia en BD (in-memory actualmente — se pierde al reiniciar)
+- [ ] BAP dinamico (init/confirm deben usar datos del on_select almacenado)
+- [ ] Hospedar schema JSON-LD para `performanceAttributes`
+- [ ] Publish de nuestro catalogo al CDS real
+- [ ] Discovery Service propio
+- [ ] Conectar orchestrator real al provider
+- [ ] Conectar agentes reales al orchestrator
+
+## Skills de Claude Code
+
+### Proyecto real
+- `/mp-status` — Estado de los servicios del marketplace
+- `/mp-flow [full|select|smoke]` — Ejecuta flujo Beckn
+- `/mp-logs [bap|bpp|onix|services|errors]` — Logs filtrados
+
+### Sandbox de referencia
+- `/beckn-status` — Estado del sandbox
+- `/beckn-flow` — Flujo contra sandbox
+- `/beckn-logs` — Logs del sandbox

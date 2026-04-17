@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schema.beckn.io/ai-agents/v1/",
+  "title": "Beckn AI Agent Service Schema",
+  "description": "Domain-specific schema for AI agent services on the Beckn network. This schema extends Beckn v2 Resource.resourceAttributes with fields specific to AI agents: capabilities, SLAs, pricing, input/output schemas, and execution results.",
+  "version": "0.1.0",
+  "definitions": {
+    "AIAgentService": {
+      "type": "object",
+      "properties": {
+        "@context": {
+          "const": "https://schema.beckn.io/ai-agents/v1/"
+        },
+        "@type": {
+          "const": "beckn:AIAgentService"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of capability tags: document_summary, code_review, data_extraction, translation, etc."
+        },
+        "languages": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "ISO 639-1 language codes supported by the agent"
+        },
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "accepts": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "MIME types accepted as input"
+            },
+            "maxSize": { "type": "string", "description": "Maximum input size (e.g., '50MB')" }
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "returns": { "type": "string", "description": "MIME type of the output" }
+          }
+        },
+        "pricing": {
+          "type": "object",
+          "properties": {
+            "model": { "type": "string", "enum": ["per_task", "per_token", "per_minute", "flat_rate"] },
+            "currency": { "type": "string" },
+            "unitPrice": { "type": "number" }
+          },
+          "required": ["model", "currency", "unitPrice"]
+        },
+        "sla": {
+          "type": "object",
+          "properties": {
+            "maxLatency": { "type": "string", "description": "ISO 8601 duration (e.g., PT5S)" },
+            "accuracy": { "type": "number", "minimum": 0, "maximum": 1 },
+            "uptime": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        },
+        "dataResidency": {
+          "type": "string",
+          "description": "ISO 3166-1 alpha-2 country code for data residency"
+        },
+        "modelInfo": {
+          "type": "object",
+          "properties": {
+            "provider": { "type": "string" },
+            "version": { "type": "string" }
+          }
+        },
+        "credentials": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": { "type": "string" },
+              "issuer": { "type": "string" },
+              "validUntil": { "type": "string", "format": "date-time" }
+            }
+          }
+        }
+      },
+      "required": ["@context", "@type", "capabilities"]
+    },
+    "AgentExecution": {
+      "type": "object",
+      "description": "Returned in Contract.performance[].performanceAttributes after agent execution",
+      "properties": {
+        "@context": {
+          "const": "https://schema.beckn.io/ai-agents/v1/"
+        },
+        "@type": {
+          "const": "beckn:AgentExecution"
+        },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "completedAt": { "type": "string", "format": "date-time" },
+        "latencyMs": { "type": "integer" },
+        "tokensConsumed": { "type": "integer" },
+        "result": { "type": "object" },
+        "status": {
+          "type": "string",
+          "enum": ["PENDING", "RUNNING", "COMPLETED", "FAILED"]
+        }
+      },
+      "required": ["@context", "@type", "status"]
+    }
+  }
+}

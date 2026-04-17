@@ -1,0 +1,195 @@
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║        Beckn AI Agent Marketplace — Docker Compose              ║
+# ╠══════════════════════════════════════════════════════════════════╣
+# ║                                                                 ║
+# ║  Usage:                                                         ║
+# ║    docker compose up --build            # All services           ║
+# ║    docker compose up --build bpp-provider  # Only BPP + deps    ║
+# ║    docker compose logs -f bpp-provider     # Follow BPP logs    ║
+# ║                                                                 ║
+# ╠══════════════════════════════════════════════════════════════════╣
+# ║                                                                 ║
+# ║  Architecture (how services interact):                          ║
+# ║                                                                 ║
+# ║  [Frontend] → [bap-marketplace] → [onix-bap] ↔ [onix-bpp]      ║
+# ║   (future)     BAP buyer side      firma       firma             ║
+# ║                :3001               :8081       :8082             ║
+# ║                                                    ↓             ║
+# ║                                              [bpp-provider]     ║
+# ║                                               BPP agent catalog ║
+# ║                                               :3002             ║
+# ║                                                       ↓         ║
+# ║                                                  [orchestrator] ║
+# ║                                                   ejecuta agts  ║
+# ║                                                   :3003         ║
+# ║                                                       ↓         ║
+# ║                                                  [agents]       ║
+# ║                                                   agentes IA    ║
+# ║                                                   :3004 (fut.)  ║
+# ║                                                                 ║
+# ║  [redis] — cache compartido para ONIX (registry lookups)        ║
+# ║                                                                 ║
+# ╚══════════════════════════════════════════════════════════════════╝
+
+services:
+
+  # ─── Infrastructure ───────────────────────────────────────────────
+  #
+  # Servicios base que NO se modifican. Son dependencias externas.
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - beckn_network
+
+  # ─── ONIX Adapters (Beckn protocol middleware) ────────────────────
+  #
+  # ONIX es un binario Go precompilado que actua como proxy entre
+  # nuestros servicios y la red Beckn. NO se modifica su codigo.
+  #
+  # Cada adapter tiene dos "lados":
+  #   - Caller  (/bap/caller or /bpp/caller)  = salida → hacia la red
+  #   - Receiver (/bap/receiver or /bpp/receiver) = entrada ← desde la red
+  #
+  # Pipeline:
+  #   Caller:   addRoute → sign → validateSchema
+  #   Receiver: validateSign → addRoute → validateSchema
+
+  onix-bap:
+    image: fidedocker/onix-adapter
+    platform: linux/amd64
+    command: ["./server", "--config=/app/config/bap.yaml"]
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./onix:/app/config
+    environment:
+      - REDIS_ADDR=redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - beckn_network
+
+  onix-bpp:
+    image: fidedocker/onix-adapter
+    platform: linux/amd64
+    command: ["./server", "--config=/app/config/bpp.yaml"]
+    ports:
+      - "8082:8082"
+    volumes:
+      - ./onix:/app/config
+    environment:
+      - REDIS_ADDR=redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - beckn_network
+
+  # ─── Nuestros servicios ───────────────────────────────────────────
+
+  # MARKETPLACE (BAP - Beckn Application Platform)
+  # Lado comprador del marketplace. Lo que el usuario/frontend consume.
+  # Recibe callbacks on_* de ONIX y expone API REST para el frontend.
+  #
+  # Equipo: Beckn/Protocol (Luis)
+  # Codigo: services/bap/
+  bap-marketplace:
+    build:
+      context: ..
+      dockerfile: services/bap/Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - BAP_CALLER_URL=http://onix-bap:8081/bap/caller
+      - SERVICE_NAME=bap-marketplace
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - beckn_network
+
+  # PROVIDER (BPP - Beckn Provider Platform)
+  # Lado proveedor. Publica catalogo de agentes IA, recibe transacciones
+  # Beckn (select/init/confirm), y delega ejecucion al orchestrator.
+  #
+  # Equipo: Beckn/Protocol (Luis) + Database
+  # Codigo: services/bpp/
+  bpp-provider:
+    build:
+      context: ..
+      dockerfile: services/bpp/Dockerfile
+    ports:
+      - "3002:3002"
+    environment:
+      - PORT=3002
+      - BPP_CALLBACK_URL=http://onix-bpp:8082/bpp/caller
+      - ORCHESTRATOR_URL=http://orchestrator:3003
+      - SERVICE_NAME=bpp-provider
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - beckn_network
+
+  # ORCHESTRATOR
+  # Recibe tareas del provider despues de un confirm, ejecuta agentes IA,
+  # y devuelve resultados.
+  #
+  # Equipo: Orchestrator
+  # Codigo: services/orchestrator/
+  orchestrator:
+    build:
+      context: ..
+      dockerfile: services/orchestrator/Dockerfile
+    ports:
+      - "3003:3003"
+    environment:
+      - PORT=3003
+      - SERVICE_NAME=orchestrator
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3003/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - beckn_network
+
+  # AGENTS (placeholder — equipo de agentes IA trabaja aqui)
+  # Los agentes IA individuales. El orchestrator los invoca.
+  #
+  # Equipo: Agentes IA
+  # Codigo: services/agents/
+  # agents:
+  #   build:
+  #     context: ..
+  #     dockerfile: services/agents/Dockerfile
+  #   ports:
+  #     - "3004:3004"
+  #   environment:
+  #     - PORT=3004
+  #     - SERVICE_NAME=agents
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:3004/health"]
+  #     interval: 10s
+  #     timeout: 3s
+  #     retries: 5
+  #   networks:
+  #     - beckn_network
+
+networks:
+  beckn_network:
+    driver: bridge

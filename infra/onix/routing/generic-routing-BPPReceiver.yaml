@@ -1,0 +1,22 @@
+# BPP Receiver Routing — inbound action requests from BAPs to our BPP service
+#
+# All action requests are forwarded to bpp-ai (our FastAPI BPP backend).
+
+routingRules:
+  - networkId: "beckn.one/testnet"
+    version: "2.0.0"
+    targetType: "url"
+    target:
+      url: "http://bpp-provider:3002/api/webhook"
+    endpoints:
+      - discover
+      - select
+      - init
+      - confirm
+      - status
+      - track
+      - update
+      - cancel
+      - rate
+      - support
+      - on_publish

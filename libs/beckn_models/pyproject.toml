@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "beckn-models"
+version = "0.1.0"
+description = "Shared Pydantic models for Beckn v2.0.0 AI Agent Marketplace"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["beckn_models*"]
