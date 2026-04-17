@@ -202,19 +202,28 @@ async def handle_status(context: dict, message: dict) -> dict:
             break
 
     # Mock execution result (Iter 0)
-    # NOTE: performanceAttributes requires @context/@type (Beckn Attributes type).
-    # We omit performanceAttributes entirely to avoid ONIX extended schema validation
-    # failing on our custom @context URL (not hosted yet). The execution result goes
-    # in performance.status.descriptor for now. When we host our schema JSON-LD,
-    # we'll move it to performanceAttributes with proper @context.
+    # Extended schema validation is disabled in ONIX config (extendedSchema_enabled: false)
+    # so ONIX only checks that @context and @type are present (base validation) but does
+    # NOT fetch or validate against the URL. When we host a proper JSON-LD context document,
+    # we can re-enable extended validation.
+    schema_url = "https://raw.githubusercontent.com/luisferdev11/beckn-ai-agent-marketplace/main/schemas/ai-agents-v1.json"
     performance = [{
         "id": "perf-001",
-        "status": {
-            "code": "COMPLETED",
-            "name": "Agent Execution Complete",
-            "shortDesc": "[MOCK] El documento establece tres provisiones regulatorias clave "
-            "relacionadas con el cumplimiento de datos personales, obligaciones de "
-            "reporte trimestral, y clausulas de penalizacion por incumplimiento.",
+        "status": {"code": "COMPLETED"},
+        "performanceAttributes": {
+            "@context": schema_url,
+            "@type": "beckn:AgentExecution",
+            "startedAt": stored.get("confirmed_at", _now_iso()) if stored else _now_iso(),
+            "completedAt": _now_iso(),
+            "latencyMs": 3200,
+            "tokensConsumed": 4200,
+            "result": {
+                "summary": "[MOCK] El documento establece tres provisiones regulatorias clave "
+                "relacionadas con el cumplimiento de datos personales, obligaciones de "
+                "reporte trimestral, y clausulas de penalizacion por incumplimiento.",
+                "confidence": 0.94,
+            },
+            "status": "COMPLETED",
         },
     }]
 

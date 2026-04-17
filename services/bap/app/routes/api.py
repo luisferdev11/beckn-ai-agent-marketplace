@@ -5,7 +5,12 @@ These endpoints are called by the frontend (or scripts/tests) to trigger
 Beckn actions. The BAP builds the Beckn payload and POSTs it to
 ONIX-BAP at /bap/caller/{action}.
 
-Flow: Frontend → BAP API → ONIX-BAP (sign + route) → ONIX-BPP → BPP
+Key improvement: init/confirm use stored data from on_select instead of
+hardcoding values. The flow is:
+  1. select → stores transactionId, agent_id, offer_id
+  2. on_select callback arrives → store accumulates contract (commitments, consideration)
+  3. init → reads stored commitments from on_select, adds performance/settlements
+  4. confirm → reads stored contract, changes settlement to COMPLETE
 """
 
 import logging
@@ -19,7 +24,10 @@ from pydantic import BaseModel
 from typing import Optional
 
 from app.config import BAP_CALLER_URL, BAP_ID, BAP_URI, BPP_ID, BPP_URI, NETWORK_ID
-from app.store import get_all_callbacks, get_last_callback, get_callbacks_count, get_all_transactions, get_transaction
+from app.store import (
+    get_all_callbacks, get_last_callback, get_callbacks_count,
+    get_all_transactions, get_transaction, get_transaction_contract,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +40,6 @@ def _now_iso() -> str:
 
 
 def _build_context(action: str, transaction_id: str | None = None) -> dict:
-    """Build a Beckn context for an outgoing action."""
     return {
         "networkId": NETWORK_ID,
         "action": action,
@@ -49,7 +56,6 @@ def _build_context(action: str, transaction_id: str | None = None) -> dict:
 
 
 async def _send_to_onix(action: str, payload: dict) -> dict:
-    """Send a Beckn action to ONIX-BAP caller."""
     url = f"{BAP_CALLER_URL}/{action}"
     async with httpx.AsyncClient(timeout=15.0) as client:
         response = await client.post(url, json=payload)
@@ -64,6 +70,7 @@ class SelectRequest(BaseModel):
     agent_id: str = "agent-summarizer-001"
     offer_id: str = "offer-summarizer-basic"
     quantity: int = 1
+    buyer_name: str = "Marketplace User"
 
 
 @router.post("/contracts/select")
@@ -79,7 +86,7 @@ async def select(req: SelectRequest):
             "contract": {
                 "id": f"contract-{txn_id[:8]}",
                 "participants": [
-                    {"id": "participant-buyer-001", "descriptor": {"name": "Marketplace User", "code": "buyer"}}
+                    {"id": "participant-buyer-001", "descriptor": {"name": req.buyer_name, "code": "buyer"}}
                 ],
                 "commitments": [{
                     "id": "commitment-001",
@@ -100,31 +107,50 @@ async def select(req: SelectRequest):
     return {"transactionId": txn_id, "onix_response": result}
 
 
-class InitRequest(BaseModel):
+class TxnRequest(BaseModel):
     transaction_id: str
 
 
 @router.post("/contracts/init")
-async def init(req: InitRequest):
-    """Continue transaction: provide fulfillment details."""
+async def init(req: TxnRequest):
+    """Continue transaction: provide fulfillment details.
+    Uses stored contract data from on_select callback."""
+    contract = get_transaction_contract(req.transaction_id)
     ctx = _build_context("init", req.transaction_id)
+
+    # Use commitments and participants from on_select if available
+    commitments = contract.get("commitments", [])
+    participants = contract.get("participants", [])
+
+    # Fallback if on_select hasn't arrived yet
+    if not commitments:
+        logger.warning(f"init: no stored commitments for txn={req.transaction_id[:8]}, using defaults")
+        commitments = [{
+            "status": {"descriptor": {"code": "DRAFT"}},
+            "resources": [{"id": "agent-summarizer-001", "descriptor": {"name": "AI Agent", "code": "AAS-001"},
+                           "quantity": {"unitQuantity": 1, "unitCode": "UNIT"}}],
+            "offer": {"id": "offer-summarizer-basic", "resourceIds": ["agent-summarizer-001"]},
+        }]
+    else:
+        # Transform commitments for init: wrap status in descriptor
+        init_commitments = []
+        for c in commitments:
+            ic = {**c}
+            status = ic.get("status", {})
+            if isinstance(status, dict) and "code" in status and "descriptor" not in status:
+                ic["status"] = {"descriptor": {"code": status["code"]}}
+            init_commitments.append(ic)
+        commitments = init_commitments
+
+    if not participants:
+        participants = [{"id": "participant-buyer-001", "descriptor": {"name": "Marketplace User", "code": "buyer"}}]
 
     payload = {
         "context": ctx,
         "message": {
             "contract": {
-                "commitments": [{
-                    "status": {"descriptor": {"code": "DRAFT"}},
-                    "resources": [{
-                        "id": "agent-summarizer-001",
-                        "descriptor": {"name": "AI Agent", "code": "AAS-001"},
-                        "quantity": {"unitQuantity": 1, "unitCode": "UNIT"},
-                    }],
-                    "offer": {"id": "offer-summarizer-basic", "resourceIds": ["agent-summarizer-001"]},
-                }],
-                "participants": [
-                    {"id": "participant-buyer-001", "descriptor": {"name": "Marketplace User", "code": "buyer"}}
-                ],
+                "commitments": commitments,
+                "participants": participants,
                 "performance": [{"id": "perf-001"}],
                 "settlements": [{"id": "settlement-001", "status": "DRAFT"}],
             }
@@ -135,35 +161,56 @@ async def init(req: InitRequest):
     return {"transactionId": req.transaction_id, "onix_response": result}
 
 
-class ConfirmRequest(BaseModel):
-    transaction_id: str
-
-
 @router.post("/contracts/confirm")
-async def confirm(req: ConfirmRequest):
-    """Confirm the transaction: trigger agent execution."""
+async def confirm(req: TxnRequest):
+    """Confirm the transaction: trigger agent execution.
+    Uses stored contract data from on_select/on_init callbacks."""
+    contract = get_transaction_contract(req.transaction_id)
     ctx = _build_context("confirm", req.transaction_id)
+
+    contract_id = contract.get("id", f"contract-{req.transaction_id[:8]}")
+    commitments = contract.get("commitments", [])
+    participants = contract.get("participants", [])
+    performance = contract.get("performance", [{"id": "perf-001"}])
+    settlements = contract.get("settlements", [{"id": "settlement-001"}])
+
+    # Fallback
+    if not commitments:
+        logger.warning(f"confirm: no stored commitments for txn={req.transaction_id[:8]}, using defaults")
+        commitments = [{
+            "id": "commitment-001",
+            "status": {"descriptor": {"code": "DRAFT"}},
+            "resources": [{"id": "agent-summarizer-001", "descriptor": {"name": "AI Agent", "code": "AAS-001"},
+                           "quantity": {"unitQuantity": 1, "unitCode": "UNIT"}}],
+            "offer": {"id": "offer-summarizer-basic", "resourceIds": ["agent-summarizer-001"]},
+        }]
+    else:
+        confirm_commitments = []
+        for c in commitments:
+            ic = {**c}
+            status = ic.get("status", {})
+            if isinstance(status, dict) and "code" in status and "descriptor" not in status:
+                ic["status"] = {"descriptor": {"code": status["code"]}}
+            confirm_commitments.append(ic)
+        commitments = confirm_commitments
+
+    if not participants:
+        participants = [{"id": "participant-buyer-001", "descriptor": {"name": "Marketplace User", "code": "buyer"}}]
+
+    # Settlements change to COMPLETE on confirm
+    confirmed_settlements = [{"id": s.get("id", "settlement-001"), "status": "COMPLETE"} for s in settlements]
+    if not confirmed_settlements:
+        confirmed_settlements = [{"id": "settlement-001", "status": "COMPLETE"}]
 
     payload = {
         "context": ctx,
         "message": {
             "contract": {
-                "id": f"contract-{req.transaction_id[:8]}",
-                "commitments": [{
-                    "id": "commitment-001",
-                    "status": {"descriptor": {"code": "DRAFT"}},
-                    "resources": [{
-                        "id": "agent-summarizer-001",
-                        "descriptor": {"name": "AI Agent", "code": "AAS-001"},
-                        "quantity": {"unitQuantity": 1, "unitCode": "UNIT"},
-                    }],
-                    "offer": {"id": "offer-summarizer-basic", "resourceIds": ["agent-summarizer-001"]},
-                }],
-                "participants": [
-                    {"id": "participant-buyer-001", "descriptor": {"name": "Marketplace User", "code": "buyer"}}
-                ],
-                "performance": [{"id": "perf-001"}],
-                "settlements": [{"id": "settlement-001", "status": "COMPLETE"}],
+                "id": contract_id,
+                "commitments": commitments,
+                "participants": participants,
+                "performance": performance,
+                "settlements": confirmed_settlements,
             }
         },
     }
@@ -172,32 +219,40 @@ async def confirm(req: ConfirmRequest):
     return {"transactionId": req.transaction_id, "onix_response": result}
 
 
-class StatusRequest(BaseModel):
-    transaction_id: str
-
-
 @router.post("/contracts/status")
-async def status(req: StatusRequest):
-    """Check execution status."""
+async def status(req: TxnRequest):
+    """Check execution status. Uses stored commitments."""
+    contract = get_transaction_contract(req.transaction_id)
     ctx = _build_context("status", req.transaction_id)
+
+    commitments = contract.get("commitments", [])
+    if not commitments:
+        commitments = [{
+            "id": "commitment-001", "status": {"descriptor": {"code": "ACTIVE"}},
+            "resources": [{"id": "agent-summarizer-001", "descriptor": {"name": "AI Agent", "code": "AAS-001"},
+                           "quantity": {"unitQuantity": 1, "unitCode": "UNIT"}}],
+            "offer": {"id": "offer-summarizer-basic", "resourceIds": ["agent-summarizer-001"]},
+        }]
+    else:
+        status_commitments = []
+        for c in commitments:
+            ic = {**c}
+            status_val = ic.get("status", {})
+            if isinstance(status_val, dict) and "code" in status_val and "descriptor" not in status_val:
+                ic["status"] = {"descriptor": {"code": "ACTIVE"}}
+            status_commitments.append(ic)
+        commitments = status_commitments
+
     payload = {
         "context": ctx,
         "message": {
             "contract": {
-                "id": f"contract-{req.transaction_id[:8]}",
-                "commitments": [{
-                    "id": "commitment-001",
-                    "status": {"descriptor": {"code": "ACTIVE"}},
-                    "resources": [{
-                        "id": "agent-summarizer-001",
-                        "descriptor": {"name": "AI Agent", "code": "AAS-001"},
-                        "quantity": {"unitQuantity": 1, "unitCode": "UNIT"},
-                    }],
-                    "offer": {"id": "offer-summarizer-basic", "resourceIds": ["agent-summarizer-001"]},
-                }],
+                "id": contract.get("id", f"contract-{req.transaction_id[:8]}"),
+                "commitments": commitments,
             }
         },
     }
+
     result = await _send_to_onix("status", payload)
     return {"transactionId": req.transaction_id, "onix_response": result}
 
@@ -206,31 +261,26 @@ async def status(req: StatusRequest):
 
 @router.get("/callbacks")
 async def list_callbacks():
-    """List all callbacks received."""
     return get_all_callbacks()
 
 
 @router.get("/callbacks/count")
 async def callbacks_count():
-    """Return callback count."""
     return {"callbacks_recibidos": get_callbacks_count(), "status": "ok"}
 
 
 @router.get("/callbacks/ultimo")
 async def last_callback():
-    """Return the last callback received."""
     cb = get_last_callback()
     return cb if cb else {"error": "no callbacks yet"}
 
 
 @router.get("/transactions")
 async def list_transactions():
-    """List all transactions."""
     return get_all_transactions()
 
 
 @router.get("/transactions/{txn_id}")
 async def get_transaction_detail(txn_id: str):
-    """Get details of a specific transaction."""
     txn = get_transaction(txn_id)
     return txn if txn else {"error": "transaction not found"}

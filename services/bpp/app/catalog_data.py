@@ -44,7 +44,7 @@ AGENTS = [
         "provider": {"id": PROVIDER["id"], "descriptor": PROVIDER["descriptor"]},
         "availableAt": PROVIDER["availableAt"],
         "resourceAttributes": {
-            "@context": "https://schema.beckn.io/ai-agents/v1/",
+            "@context": "https://raw.githubusercontent.com/luisferdev11/beckn-ai-agent-marketplace/main/schemas/ai-agents-v1.json",
             "@type": "beckn:AIAgentService",
             "capabilities": ["document_summary", "legal_analysis"],
             "languages": ["en", "hi"],
@@ -67,7 +67,7 @@ AGENTS = [
         "provider": {"id": PROVIDER["id"], "descriptor": PROVIDER["descriptor"]},
         "availableAt": PROVIDER["availableAt"],
         "resourceAttributes": {
-            "@context": "https://schema.beckn.io/ai-agents/v1/",
+            "@context": "https://raw.githubusercontent.com/luisferdev11/beckn-ai-agent-marketplace/main/schemas/ai-agents-v1.json",
             "@type": "beckn:AIAgentService",
             "capabilities": ["code_review", "security_analysis", "best_practices"],
             "languages": ["en"],
@@ -93,7 +93,7 @@ AGENTS = [
         "provider": {"id": PROVIDER["id"], "descriptor": PROVIDER["descriptor"]},
         "availableAt": PROVIDER["availableAt"],
         "resourceAttributes": {
-            "@context": "https://schema.beckn.io/ai-agents/v1/",
+            "@context": "https://raw.githubusercontent.com/luisferdev11/beckn-ai-agent-marketplace/main/schemas/ai-agents-v1.json",
             "@type": "beckn:AIAgentService",
             "capabilities": ["data_extraction", "ocr", "invoice_processing"],
             "languages": ["en", "hi", "ta"],
@@ -153,7 +153,7 @@ OFFERS = [
 
 
 def get_catalog_for_publish():
-    """Return the full catalog payload for Beckn publish action."""
+    """Return the catalog payload for Beckn publish and internal use."""
     return {
         "id": "catalog-ai-agents-001",
         "descriptor": {

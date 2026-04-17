@@ -125,9 +125,17 @@ def main():
         else:
             cb = get(f"{BAP}/callbacks/ultimo")
             perf = cb.get("message", {}).get("contract", {}).get("performance", [{}])[0]
-            status = perf.get("status", {})
-            print(f"  Agent status: {status.get('code', '?')}")
-            print(f"  Result: {status.get('shortDesc', '?')[:80]}...")
+            perf_status = perf.get("status", {})
+            attrs = perf.get("performanceAttributes", {})
+            if attrs:
+                print(f"  Agent status: {attrs.get('status', perf_status.get('code', '?'))}")
+                print(f"  Latency: {attrs.get('latencyMs', '?')}ms")
+                result = attrs.get("result", {})
+                print(f"  Summary: {result.get('summary', '?')[:80]}...")
+                print(f"  Confidence: {result.get('confidence', '?')}")
+            else:
+                print(f"  Agent status: {perf_status.get('code', '?')}")
+                print(f"  Result: {perf_status.get('shortDesc', '?')[:80]}...")
 
     # Final summary
     print("\n" + "=" * 60)
