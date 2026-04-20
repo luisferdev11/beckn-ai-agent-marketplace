@@ -1,0 +1,131 @@
+{
+  "info": {
+    "name": "AI Marketplace — BAP (Discover → Select → Init → Confirm)",
+    "description": "BAP-side: full transaction flow for the AI Agent Marketplace.\n\nRun [BPP] publish FIRST, then run these in order.\n\nSet bap_adapter_url = http://localhost:8081/bap/caller before running.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1 — Discovery",
+      "item": [
+        {
+          "name": "discover",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"context\": {\n    \"networkId\": \"beckn.one/testnet\",\n    \"action\": \"discover\",\n    \"version\": \"2.0.0\",\n    \"bapId\": \"{{bap_id}}\",\n    \"bapUri\": \"{{bap_uri}}\",\n    \"transactionId\": \"{{transaction_id}}\",\n    \"messageId\": \"{{$guid}}\",\n    \"timestamp\": \"{{$isoTimestamp}}\",\n    \"ttl\": \"PT30S\",\n    \"schemaContext\": []\n  },\n  \"message\": {\n    \"intent\": {\n      \"filters\": {\n        \"type\": \"jsonpath\",\n        \"expression\": \"$.catalogs[*].resources[*]\"\n      }\n    }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{bap_adapter_url}}/discover",
+              "host": ["{{bap_adapter_url}}"],
+              "path": ["discover"]
+            },
+            "description": "Search for available AI agents across the network. The Discovery Service queries Fabric catalog and returns on_discover asynchronously to sandbox-bap."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "2 — Transaction",
+      "item": [
+        {
+          "name": "select",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"context\": {\n    \"networkId\": \"beckn.one/testnet\",\n    \"action\": \"select\",\n    \"version\": \"2.0.0\",\n    \"bapId\": \"{{bap_id}}\",\n    \"bapUri\": \"{{bap_uri}}\",\n    \"bppId\": \"{{bpp_id}}\",\n    \"bppUri\": \"{{bpp_uri}}\",\n    \"transactionId\": \"{{transaction_id}}\",\n    \"messageId\": \"{{$guid}}\",\n    \"timestamp\": \"{{$isoTimestamp}}\",\n    \"ttl\": \"PT30S\",\n    \"schemaContext\": []\n  },\n  \"message\": {\n    \"contract\": {\n      \"id\": \"draft-contract-0001\",\n      \"participants\": [\n        {\n          \"id\": \"participant-buyer-001\",\n          \"descriptor\": { \"name\": \"John Doe\", \"code\": \"buyer\" }\n        }\n      ],\n      \"commitments\": [\n        {\n          \"id\": \"commitment-001\",\n          \"descriptor\": { \"name\": \"AI Summarization\", \"code\": \"agent-summarizer-01\" },\n          \"status\": { \"code\": \"DRAFT\" },\n          \"resources\": [\n            {\n              \"id\": \"agent-summarizer-01\",\n              \"descriptor\": { \"name\": \"DocSummarizer Pro\", \"code\": \"agent-summarizer-01\" },\n              \"quantity\": { \"unitQuantity\": 1, \"unitCode\": \"UNIT\" }\n            }\n          ],\n          \"offer\": {\n            \"id\": \"OFFER-SUMMARIZER-01\",\n            \"resourceIds\": [\"agent-summarizer-01\"]\n          }\n        }\n      ],\n      \"consideration\": [\n        {\n          \"id\": \"consideration-001\",\n          \"price\": { \"currency\": \"USD\", \"value\": \"0.05\" },\n          \"status\": { \"code\": \"DRAFT\" }\n        }\n      ]\n    }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{bap_adapter_url}}/select",
+              "host": ["{{bap_adapter_url}}"],
+              "path": ["select"]
+            },
+            "description": "Select DocSummarizer Pro agent. Routes BAP → onix-bap → DeDi Registry → onix-bpp → bpp-api. Response arrives as on_select callback."
+          },
+          "response": []
+        },
+        {
+          "name": "init",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"context\": {\n    \"networkId\": \"beckn.one/testnet\",\n    \"action\": \"init\",\n    \"version\": \"2.0.0\",\n    \"bapId\": \"{{bap_id}}\",\n    \"bapUri\": \"{{bap_uri}}\",\n    \"bppId\": \"{{bpp_id}}\",\n    \"bppUri\": \"{{bpp_uri}}\",\n    \"transactionId\": \"{{transaction_id}}\",\n    \"messageId\": \"{{$guid}}\",\n    \"timestamp\": \"{{$isoTimestamp}}\",\n    \"ttl\": \"PT30S\"\n  },\n  \"message\": {\n    \"contract\": {\n      \"commitments\": [\n        {\n          \"status\": { \"descriptor\": { \"code\": \"DRAFT\" } },\n          \"resources\": [\n            {\n              \"id\": \"agent-summarizer-01\",\n              \"descriptor\": { \"name\": \"DocSummarizer Pro\", \"code\": \"agent-summarizer-01\" },\n              \"quantity\": { \"unitQuantity\": 1, \"unitCode\": \"UNIT\" }\n            }\n          ],\n          \"offer\": {\n            \"id\": \"OFFER-SUMMARIZER-01\",\n            \"resourceIds\": [\"agent-summarizer-01\"]\n          }\n        }\n      ],\n      \"participants\": [\n        {\n          \"id\": \"participant-buyer-001\",\n          \"descriptor\": { \"name\": \"John Doe\", \"code\": \"buyer\" }\n        }\n      ],\n      \"performance\": [{ \"id\": \"perf-001\" }],\n      \"settlements\": [{ \"id\": \"settlement-001\", \"status\": \"DRAFT\" }]\n    }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{bap_adapter_url}}/init",
+              "host": ["{{bap_adapter_url}}"],
+              "path": ["init"]
+            },
+            "description": "Initialize transaction for DocSummarizer Pro. Creates transaction record in bpp-api PostgreSQL (status=INITIALIZED). Response arrives as on_init callback."
+          },
+          "response": []
+        },
+        {
+          "name": "confirm",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"context\": {\n    \"networkId\": \"beckn.one/testnet\",\n    \"action\": \"confirm\",\n    \"version\": \"2.0.0\",\n    \"bapId\": \"{{bap_id}}\",\n    \"bapUri\": \"{{bap_uri}}\",\n    \"bppId\": \"{{bpp_id}}\",\n    \"bppUri\": \"{{bpp_uri}}\",\n    \"transactionId\": \"{{transaction_id}}\",\n    \"messageId\": \"{{$guid}}\",\n    \"timestamp\": \"{{$isoTimestamp}}\",\n    \"ttl\": \"PT30S\"\n  },\n  \"message\": {\n    \"contract\": {\n      \"id\": \"draft-contract-0001\",\n      \"commitments\": [\n        {\n          \"id\": \"commitment-001\",\n          \"status\": { \"descriptor\": { \"code\": \"DRAFT\" } },\n          \"resources\": [\n            {\n              \"id\": \"agent-summarizer-01\",\n              \"descriptor\": { \"name\": \"DocSummarizer Pro\", \"code\": \"agent-summarizer-01\" },\n              \"quantity\": { \"unitQuantity\": 1, \"unitCode\": \"UNIT\" }\n            }\n          ],\n          \"offer\": {\n            \"id\": \"OFFER-SUMMARIZER-01\",\n            \"resourceIds\": [\"agent-summarizer-01\"]\n          }\n        }\n      ],\n      \"participants\": [\n        {\n          \"id\": \"participant-buyer-001\",\n          \"descriptor\": { \"name\": \"John Doe\", \"code\": \"buyer\" }\n        }\n      ],\n      \"performance\": [{ \"id\": \"perf-001\" }],\n      \"settlements\": [{ \"id\": \"settlement-001\", \"status\": \"COMPLETE\" }]\n    }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{bap_adapter_url}}/confirm",
+              "host": ["{{bap_adapter_url}}"],
+              "path": ["confirm"]
+            },
+            "description": "Confirm and execute DocSummarizer Pro. bpp-api calls LLM (currently mock), updates transaction to COMPLETED. Response arrives as on_confirm callback with LLM output."
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (!pm.collectionVariables.get('transaction_id')) {",
+          "    pm.collectionVariables.set('transaction_id', pm.variables.replaceIn('{{$guid}}'));",
+          "}"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+          "pm.test('Response has ACK', function () {",
+          "    const json = pm.response.json();",
+          "    pm.expect(json).to.have.property('message');",
+          "    pm.expect(json.message).to.have.property('ack');",
+          "    pm.expect(json.message.ack.status).to.eql('ACK');",
+          "});"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    { "key": "bap_adapter_url", "value": "http://localhost:8081/bap/caller", "description": "BAP adapter caller endpoint" },
+    { "key": "bap_id", "value": "bap.example.com" },
+    { "key": "bap_uri", "value": "http://onix-bap:8081/bap/receiver" },
+    { "key": "bpp_id", "value": "bpp.example.com" },
+    { "key": "bpp_uri", "value": "http://onix-bpp:8082/bpp/receiver" },
+    { "key": "transaction_id", "value": "" }
+  ]
+}

@@ -1,0 +1,146 @@
+services:
+  # ============================================================
+  # Redis — shared cache for both adapters
+  # ============================================================
+  redis:
+    image: redis:alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - beckn_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ============================================================
+  # PostgreSQL — containerized for reliable Docker networking
+  # ============================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres-beckn
+    environment:
+      - POSTGRES_DB=beckn_ai_marketplace
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=PassTest12?
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - beckn_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d beckn_ai_marketplace"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ============================================================
+  # onix-bap — Beckn adapter acting as BAP
+  # ============================================================
+  onix-bap:
+    image: fidedocker/onix-adapter
+    container_name: onix-bap
+    platform: linux/amd64
+    networks:
+      - beckn_network
+    ports:
+      - "8081:8081"
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_ADDR: redis:6379
+    volumes:
+      - ../config:/app/config
+    command: ["./server", "--config=/app/config/generic-bap.yaml"]
+
+  # ============================================================
+  # onix-bpp — Beckn adapter acting as BPP
+  # ============================================================
+  onix-bpp:
+    image: fidedocker/onix-adapter
+    container_name: onix-bpp
+    platform: linux/amd64
+    networks:
+      - beckn_network
+    ports:
+      - "8082:8082"
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_ADDR: redis:6379
+    volumes:
+      - ../config:/app/config
+    command: ["./server", "--config=/app/config/generic-bpp.yaml"]
+
+  # ============================================================
+  # sandbox-bap — mock BAP (kept for now — replaced in step 4)
+  # ============================================================
+  sandbox-bap:
+    container_name: sandbox-bap
+    image: fidedocker/sandbox-2.0:latest
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+    ports:
+      - "3001:3001"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks:
+      - beckn_network
+
+  # ============================================================
+  # bpp-api — AI Agent Marketplace BPP (replaces sandbox-bpp)
+  #   Receives action requests at: http://bpp-api:3002/api/webhook
+  #   Health:                      http://localhost:3002/api/health
+  #   Debug endpoints:             http://localhost:3002/api/agents
+  #                                http://localhost:3002/api/transactions
+  # ============================================================
+  bpp-api:
+    container_name: bpp-api
+    build:
+      context: ../../bpp-api
+      dockerfile: Dockerfile
+    environment:
+      - PORT=3002
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=beckn_ai_marketplace
+      - DB_USER=postgres
+      - DB_PASSWORD=PassTest12?
+      - ONIX_BPP_CALLER=http://onix-bpp:8082/bpp/caller
+    ports:
+      - "3002:3002"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3002/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      onix-bpp:
+        condition: service_started
+    networks:
+      beckn_network:
+        aliases:
+          - sandbox-bpp
+
+volumes:
+  pgdata:
+
+networks:
+  beckn_network:
+    name: beckn_network
+    driver: bridge

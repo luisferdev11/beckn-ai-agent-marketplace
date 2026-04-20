@@ -1,0 +1,185 @@
+{
+  "info": {
+    "name": "AI Marketplace — BPP (Provider Portal)",
+    "description": "Provider-facing actions: publish your AI agents to the marketplace.\n\n## Quick Start\n1. Edit the collection variables (click the collection → Variables tab)\n2. Click 'publish single agent' → Send\n3. Verify with 'list agents'\n\nTarget: bpp-api at http://localhost:3002",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1 — Publish Agent",
+      "item": [
+        {
+          "name": "publish single agent",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Auto-generate version timestamp",
+                  "pm.collectionVariables.set('publish_timestamp', new Date().toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Agent saved to DB', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.db.agentsSaved).to.be.above(0);",
+                  "    // Save the agent ID for later use in BAP select/init/confirm",
+                  "    if (json.db.agentIds && json.db.agentIds.length > 0) {",
+                  "        pm.collectionVariables.set('last_published_agent_id', json.db.agentIds[0]);",
+                  "        console.log('Agent ID saved: ' + json.db.agentIds[0]);",
+                  "    }",
+                  "});",
+                  "pm.test('Catalog published to Fabric', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.fabric.catalogPublished).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"agents\": [\n    {\n      \"category_id\": \"{{agent_category_id}}\",\n      \"category_display_name\": { \"en\": \"{{agent_category_en}}\", \"es\": \"{{agent_category_es}}\" },\n      \"provider_subscriber_id\": \"{{provider_id}}\",\n      \"provider_bpp_uri\": \"{{provider_uri}}\",\n      \"provider_public_key\": \"{{provider_public_key}}\",\n      \"agent_name\": { \"en\": \"{{agent_name}}\" },\n      \"access_point_url\": \"{{agent_endpoint}}\",\n      \"interaction_type\": \"{{agent_interaction_type}}\",\n      \"version\": \"{{agent_version}}\",\n      \"capabilities\": {{agent_capabilities}},\n      \"input_schema\": {{agent_input_schema}},\n      \"output_schema\": {{agent_output_schema}},\n      \"pricing_model\": { \"type\": \"{{pricing_type}}\", \"value\": {{pricing_value}}, \"currency\": \"{{pricing_currency}}\" }\n    }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{bpp_api_url}}/api/publish",
+              "host": ["{{bpp_api_url}}"],
+              "path": ["api", "publish"]
+            },
+            "description": "Publish a single AI agent. Edit the Variables tab to configure your agent, then click Send.\n\nThe agent will be:\n1. Saved/updated in the marketplace database\n2. Published to Fabric catalog (discoverable by BAPs)"
+          },
+          "response": []
+        },
+        {
+          "name": "publish multiple agents (batch)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('All agents saved', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.db.agentsSaved).to.be.above(0);",
+                  "    console.log('Saved ' + json.db.agentsSaved + ' agents: ' + JSON.stringify(json.db.agentIds));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"agents\": [\n    {\n      \"category_id\": \"AI-SUMMARIZATION\",\n      \"category_display_name\": { \"en\": \"Document Summarizer\", \"es\": \"Resumen de Documentos\" },\n      \"provider_subscriber_id\": \"neuralspark-ai.beckn\",\n      \"provider_bpp_uri\": \"https://api.neuralspark.ai\",\n      \"provider_public_key\": \"ed25519_pub_key_neuralspark\",\n      \"agent_name\": { \"en\": \"DocSummarizer Pro\" },\n      \"access_point_url\": \"https://api.neuralspark.ai/v1/summarize\",\n      \"interaction_type\": \"sync\",\n      \"version\": \"1.0.0\",\n      \"capabilities\": [\"summarization\", \"bullet-points\", \"executive-summary\"],\n      \"input_schema\": { \"type\": \"object\", \"properties\": { \"text\": { \"type\": \"string\" } } },\n      \"output_schema\": { \"type\": \"object\", \"properties\": { \"summary\": { \"type\": \"string\" } } },\n      \"pricing_model\": { \"type\": \"per_request\", \"value\": 0.05, \"currency\": \"USD\" }\n    },\n    {\n      \"category_id\": \"AI-EXTRACTION\",\n      \"category_display_name\": { \"en\": \"Data Extraction\", \"es\": \"Extracción de Datos\" },\n      \"provider_subscriber_id\": \"neuralspark-ai.beckn\",\n      \"provider_bpp_uri\": \"https://api.neuralspark.ai\",\n      \"provider_public_key\": \"ed25519_pub_key_neuralspark\",\n      \"agent_name\": { \"en\": \"DataExtract Engine\" },\n      \"access_point_url\": \"https://api.neuralspark.ai/v1/extract\",\n      \"interaction_type\": \"sync\",\n      \"version\": \"1.0.0\",\n      \"capabilities\": [\"extraction\", \"json-output\", \"entity-recognition\"],\n      \"input_schema\": { \"type\": \"object\", \"properties\": { \"text\": { \"type\": \"string\" } } },\n      \"output_schema\": { \"type\": \"object\", \"properties\": { \"entities\": { \"type\": \"array\" } } },\n      \"pricing_model\": { \"type\": \"per_request\", \"value\": 0.08, \"currency\": \"USD\" }\n    },\n    {\n      \"category_id\": \"AI-TRANSLATION\",\n      \"category_display_name\": { \"en\": \"Translation\", \"es\": \"Traducción\" },\n      \"provider_subscriber_id\": \"lingualab.beckn\",\n      \"provider_bpp_uri\": \"https://api.lingualab.io\",\n      \"provider_public_key\": \"ed25519_pub_key_lingualab\",\n      \"agent_name\": { \"en\": \"PolyLang Translator\" },\n      \"access_point_url\": \"https://api.lingualab.io/v1/translate\",\n      \"interaction_type\": \"sync\",\n      \"version\": \"1.0.0\",\n      \"capabilities\": [\"translation\", \"multi-language\", \"context-aware\"],\n      \"input_schema\": { \"type\": \"object\", \"properties\": { \"text\": { \"type\": \"string\" }, \"target_lang\": { \"type\": \"string\" } } },\n      \"output_schema\": { \"type\": \"object\", \"properties\": { \"translated\": { \"type\": \"string\" } } },\n      \"pricing_model\": { \"type\": \"per_request\", \"value\": 0.03, \"currency\": \"USD\" }\n    },\n    {\n      \"category_id\": \"AI-CODE-GENERATION\",\n      \"category_display_name\": { \"en\": \"Code Generation\", \"es\": \"Generación de Código\" },\n      \"provider_subscriber_id\": \"lingualab.beckn\",\n      \"provider_bpp_uri\": \"https://api.lingualab.io\",\n      \"provider_public_key\": \"ed25519_pub_key_lingualab\",\n      \"agent_name\": { \"en\": \"CodeAssist AI\" },\n      \"access_point_url\": \"https://api.lingualab.io/v1/codegen\",\n      \"interaction_type\": \"sync\",\n      \"version\": \"1.0.0\",\n      \"capabilities\": [\"code-generation\", \"debugging\", \"refactoring\"],\n      \"input_schema\": { \"type\": \"object\", \"properties\": { \"prompt\": { \"type\": \"string\" }, \"language\": { \"type\": \"string\" } } },\n      \"output_schema\": { \"type\": \"object\", \"properties\": { \"code\": { \"type\": \"string\" } } },\n      \"pricing_model\": { \"type\": \"per_request\", \"value\": 0.10, \"currency\": \"USD\" }\n    }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{bpp_api_url}}/api/publish",
+              "host": ["{{bpp_api_url}}"],
+              "path": ["api", "publish"]
+            },
+            "description": "Publish multiple agents at once. Edit the body directly to add/remove agents."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "2 — Verify",
+      "item": [
+        {
+          "name": "list my agents",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Has agents', function () {",
+                  "    const agents = pm.response.json();",
+                  "    pm.expect(agents.length).to.be.above(0);",
+                  "    console.log('Total agents in marketplace: ' + agents.length);",
+                  "    agents.forEach(a => console.log('  - ' + a.name + ' (' + a.category + ') $' + a.price_amount));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bpp_api_url}}/api/agents",
+              "host": ["{{bpp_api_url}}"],
+              "path": ["api", "agents"]
+            },
+            "description": "List all agents in the marketplace database. Use after publish to verify your agents were registered."
+          },
+          "response": []
+        },
+        {
+          "name": "list transactions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bpp_api_url}}/api/transactions",
+              "host": ["{{bpp_api_url}}"],
+              "path": ["api", "transactions"]
+            },
+            "description": "List all transactions (select/init/confirm activity from BAPs)."
+          },
+          "response": []
+        },
+        {
+          "name": "health check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bpp_api_url}}/api/health",
+              "host": ["{{bpp_api_url}}"],
+              "path": ["api", "health"]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    { "key": "bpp_api_url", "value": "http://localhost:3002", "description": "bpp-api URL" },
+    { "key": "provider_id", "value": "my-company.beckn", "description": "Your Beckn subscriber ID (unique per company)" },
+    { "key": "provider_uri", "value": "https://api.my-company.com", "description": "Your API base URL" },
+    { "key": "provider_public_key", "value": "ed25519_pub_key_placeholder", "description": "Your Ed25519 public key" },
+    { "key": "agent_name", "value": "My AI Agent", "description": "Agent display name" },
+    { "key": "agent_category_id", "value": "AI-SUMMARIZATION", "description": "Category ID (AI-SUMMARIZATION, AI-EXTRACTION, AI-TRANSLATION, AI-CODE-GENERATION, or create new)" },
+    { "key": "agent_category_en", "value": "Document Summarizer", "description": "Category display name (English)" },
+    { "key": "agent_category_es", "value": "Resumen de Documentos", "description": "Category display name (Spanish)" },
+    { "key": "agent_endpoint", "value": "https://api.my-company.com/v1/agent", "description": "Agent API endpoint URL" },
+    { "key": "agent_interaction_type", "value": "sync", "description": "sync | async | streaming" },
+    { "key": "agent_version", "value": "1.0.0", "description": "Semantic version" },
+    { "key": "agent_capabilities", "value": "[\"summarization\", \"bullet-points\"]", "description": "JSON array of capability tags" },
+    { "key": "agent_input_schema", "value": "{ \"type\": \"object\", \"properties\": { \"text\": { \"type\": \"string\" } } }", "description": "JSON Schema for agent input" },
+    { "key": "agent_output_schema", "value": "{ \"type\": \"object\", \"properties\": { \"result\": { \"type\": \"string\" } } }", "description": "JSON Schema for agent output" },
+    { "key": "pricing_type", "value": "per_request", "description": "Pricing model type" },
+    { "key": "pricing_value", "value": "0.05", "description": "Price per request" },
+    { "key": "pricing_currency", "value": "USD", "description": "Currency code" },
+    { "key": "last_published_agent_id", "value": "", "description": "Auto-filled after publish — use in BAP collection" }
+  ]
+}
