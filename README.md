@@ -1,6 +1,7 @@
 # AI Agent Marketplace - Beckn Protocol
 
-TT RUN :
+TO RUN :
+
 docker compose -f docker-compose-marketplace.yml up -d --remove-orphans  
 docker compose -f docker-compose-marketplace.yml ps   
 docker compose -f docker-compose-marketplace.yml logs -f onix-bap onix-bpp  
