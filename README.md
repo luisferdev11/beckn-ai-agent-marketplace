@@ -1,5 +1,12 @@
 # AI Agent Marketplace - Beckn Protocol
 
+TT RUN :
+docker compose -f docker-compose-marketplace.yml up -d --remove-orphans  
+docker compose -f docker-compose-marketplace.yml ps   
+docker compose -f docker-compose-marketplace.yml logs -f onix-bap onix-bpp  
+
+
+
 An open marketplace for AI agents built on the **Beckn Protocol v2.0.0**. Providers (BPPs) publish AI agents — summarization, extraction, translation, code generation — and consumers (BAPs) discover and use them through a standardized transaction flow.
 
 ---
