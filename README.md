@@ -1,546 +1,335 @@
-# Getting Started with Beckn
+# AI Agent Marketplace - Beckn Protocol
 
-A hands-on starter kit for running a live beckn network in your own environment — complete with a BAP, a BPP, and the Beckn Fabric services that tie them together. No prior beckn experience needed.
+An open marketplace for AI agents built on the **Beckn Protocol v2.0.0**. Providers (BPPs) publish AI agents — summarization, extraction, translation, code generation — and consumers (BAPs) discover and use them through a standardized transaction flow.
 
 ---
 
 ## Table of Contents
 
-- [What Will You Learn?](#what-will-you-learn)
-- [What is Beckn? — A Quick Recap](#what-is-beckn---a-quick-recap)
+- [Architecture Overview](#architecture-overview)
 - [Prerequisites](#prerequisites)
-- [Quick Start: Run the Network Locally](#quick-start-run-the-network-locally)
-- [Deployment: Cloud VPS](#deployment-cloud-vps)
-- [Your First Transaction](#your-first-transaction)
-- [How It All Works](#how-it-all-works)
-  - [The Services in This Stack](#the-services-in-this-stack)
-  - [Beckn Fabric: Registry and Catalog Service](#beckn-fabric-registry-and-catalog-service)
-  - [The Full Transaction Flow](#the-full-transaction-flow)
-  - [Tracing a Request End-to-End](#tracing-a-request-end-to-end)
-- [Repository Structure](#repository-structure)
-  - [config/ — How Each File Is Used](#config--how-each-file-is-used)
-  - [postman/ — What the Collections Do](#postman--what-the-collections-do)
-- [Customising the Starter Kit](#customising-the-starter-kit)
+- [Quick Start](#quick-start)
+- [Project Structure](#project-structure)
+- [How It Works](#how-it-works)
+  - [Transaction Flow](#transaction-flow)
+  - [What Each Handler Does](#what-each-handler-does)
+  - [Database](#database)
+- [Testing with Postman](#testing-with-postman)
+- [Testing with curl](#testing-with-curl)
+- [Configuration](#configuration)
 - [Troubleshooting](#troubleshooting)
 
 ---
 
-## What Will You Learn?
+## Architecture Overview
 
-By the end of this guide you will have:
+```
+                        Beckn Fabric (external, shared infrastructure)
+                        ┌──────────────────────────────────────────┐
+                        │  DeDi Registry — identity & routing      │
+                        │  Catalog Service — stores published       │
+                        │                    agent catalogs         │
+                        │  Discovery Service — searches catalogs    │
+                        └──────────────────────────────────────────┘
+                                          ▲
+                                          │
+┌─────────────────────────────────────────┼──────────────────────────────────┐
+│                        Docker Network (beckn_network)                      │
+│                                         │                                  │
+│  ┌─────────────┐    ┌──────────┐    ┌──────────┐    ┌───────────────────┐ │
+│  │ sandbox-bap │◄──►│ onix-bap │◄──►│ onix-bpp │◄──►│     bpp-api      │ │
+│  │ (mock BAP)  │    │ port 8081│    │ port 8082│    │    port 3002     │ │
+│  │ port 3001   │    │ signs &  │    │ signs &  │    │  Our code:       │ │
+│  └─────────────┘    │ validates│    │ validates│    │  handlers, DB    │ │
+│                      └──────────┘    └──────────┘    └────────┬──────────┘ │
+│                                                               │            │
+│  ┌───────────┐    ┌────────────────┐                          │            │
+│  │   redis   │    │ postgres-beckn │◄─────────────────────────┘            │
+│  │ port 6379 │    │   port 5432    │                                       │
+│  └───────────┘    └────────────────┘                                       │
+└────────────────────────────────────────────────────────────────────────────┘
+```
 
-1. **A running beckn network** — a BAP (consumer-side platform), a BPP (provider-side platform), and the ONIX adapters that connect them, all running in your own environment, local or cloud. You will also see how the **Discovery Service** serves `discover` requests from BAPs.
-
-2. **A working understanding of Beckn Fabric services** — specifically how the **DeDi Registry** is used for identity and routing, and how the **Catalog Service** lets a BPP publish its offerings.
-
-3. **An observable transaction flow** — you will fire real beckn API calls, see the messages get signed and routed, and watch the full `discover → select → init → confirm` lifecycle play out end-to-end.
-
----
-
-## What is Beckn? — A Quick Recap
-
-**Beckn** is an open protocol that allows any buyer-side application to transact with any provider-side application across an open network — without either side being locked into a single platform. Think of it like HTTP for transactions: as long as both sides speak the beckn protocol, they can discover each other, negotiate, and transact, regardless of who built them.
-
-Every beckn network has two kinds of application participants:
-
-- **BAP (Beckn Application Platform)** — the consumer side. A BAP initiates transactions by sending actions: `discover`, `select`, `init`, `confirm`, and so on.
-- **BPP (Beckn Provider Platform)** — the provider side. A BPP responds asynchronously: `on_discover`, `on_select`, `on_init`, `on_confirm`, and so on.
-
-These two sides need not talk to each other directly. Every message travels through **ONIX adapters** — middleware that handles digital signing, schema validation, and protocol-level routing. It can also support observability at the network level, business policy enforcement, and much more. This keeps your application code focused on business logic.
-
-Underpinning the whole network are **Beckn Fabric** services — shared infrastructure that every participant relies on. This starter kit uses two Fabric services: the **DeDi Registry** (for identity and routing lookups) and the **Catalog Service** (for publishing offerings). These are covered in detail in [Beckn Fabric: Registry and Catalog Service](#beckn-fabric-registry-and-catalog-service).
+**Key:** Our custom code lives exclusively in `bpp-api/`. Everything else (ONIX adapters, Redis, sandbox-bap) is shared Beckn infrastructure.
 
 ---
 
 ## Prerequisites
 
-Ensure the following tools are installed before you begin:
-
-- **Git** — to clone this repository
-- **Docker** and **Docker Compose**
+- **Docker** and **Docker Compose** — that's it. No Node.js, PostgreSQL, or Redis needed on your machine.
   - [Install Docker](https://docs.docker.com/engine/install/)
-  - Docker Compose ships with Docker Desktop; for Linux see the [Compose plugin guide](https://docs.docker.com/compose/install/)
-- **Postman** — to send test requests
+- **Postman** (optional) — for testing the full Beckn transaction flow.
   - [Download Postman](https://www.postman.com/downloads/)
 
-For cloud VPS deployment you additionally need SSH access to a Linux server (Ubuntu 22.04 recommended) with ports 8081 and 8082 open in your firewall.
-
 ---
 
-## Quick Start: Run the Network Locally
+## Quick Start
 
-This is the fastest way to see a beckn network in action. Five Docker containers — two adapters, two application simulators, and Redis — start up on your laptop and form a complete, working network.
-
-**Step 1 — Clone the repository**
-
-```shell
-git clone https://github.com/beckn/starter-kit.git
+```bash
+# 1. Clone the repo
+git clone <repo-url>
 cd starter-kit/generic-devkit/install
+
+# 2. Start everything
+docker compose -f docker-compose-marketplace.yml up --build
+
+# 3. Verify (in another terminal)
+docker compose -f docker-compose-marketplace.yml ps
 ```
 
-**Step 2 — Start the stack**
+All 6 containers should show `running` or `healthy`:
 
-```shell
-docker compose -f docker-compose-generic.yml up
+| Container | Port | Role |
+|-----------|------|------|
+| `postgres-beckn` | 5433 | PostgreSQL database |
+| `redis` | 6379 | Shared cache for ONIX adapters |
+| `onix-bap` | 8081 | BAP-side ONIX adapter (signing, validation, routing) |
+| `onix-bpp` | 8082 | BPP-side ONIX adapter |
+| `sandbox-bap` | 3001 | Mock BAP application (receives callbacks) |
+| `bpp-api` | 3002 | Our BPP — AI Agent Marketplace API |
+
+**Quick health check:**
+
+```bash
+curl http://localhost:3002/api/health
+# {"status":"ok","service":"bpp-ai-agent-marketplace","db":"connected"}
 ```
 
-The first run pulls the required Docker images. This takes a few minutes once; subsequent starts are fast.
+**Stopping:**
 
-**Step 3 — Confirm all services are healthy**
+```bash
+# Stop containers (data persists)
+docker compose -f docker-compose-marketplace.yml down
 
-```shell
-docker compose -f docker-compose-generic.yml ps
-```
-
-Wait until all five containers show `running` or `healthy`:
-
-| Service | Port | Status to expect |
-|---------|------|-----------------|
-| `redis` | 6379 | `healthy` |
-| `onix-bap` | 8081 | `running` |
-| `onix-bpp` | 8082 | `running` |
-| `app-bap` | 3001 | `healthy` |
-| `app-bpp` | 3002 | `healthy` |
-
-**Step 4 — (Optional) Watch the adapters in real time**
-
-Open a second terminal and tail the adapter logs while you send requests:
-
-```shell
-docker compose -f docker-compose-generic.yml logs -f onix-bap onix-bpp
-```
-
-You will see each message being signed, validated, and routed as you work through the transaction steps.
-
-**Stopping the stack**
-
-```shell
-docker compose -f docker-compose-generic.yml down
+# Stop and DELETE all data
+docker compose -f docker-compose-marketplace.yml down -v
 ```
 
 ---
 
-## Deployment: Cloud VPS
-
-The same Docker Compose file works on any Linux VPS. Follow these steps after provisioning your server.
-
-**Recommended server spec:** 2 GB RAM, Ubuntu 22.04.
-
-**Firewall — open these ports:**
-
-| Port | Purpose |
-|------|---------|
-| 22 | SSH |
-| 8081 | onix-bap (BAP ONIX adapter) |
-| 8082 | onix-bpp (BPP ONIX adapter) |
-| 3001 | app-bap (optional — for direct application access) |
-| 3002 | app-bpp (optional) |
-
-**Install Docker on the server:**
-
-```shell
-ssh user@your-server-ip
-
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER
-newgrp docker
-```
-
-**Clone and start:**
-
-```shell
-git clone https://github.com/beckn/starter-kit.git
-cd starter-kit/generic-devkit/install
-docker compose -f docker-compose-generic.yml up -d
-```
-
-The `-d` flag runs the stack in the background. Verify with:
-
-```shell
-docker compose -f docker-compose-generic.yml ps
-docker compose -f docker-compose-generic.yml logs --tail=50
-```
-
-**Make the stack survive reboots:**
-
-The `onix-bap` and `onix-bpp` containers already have `restart: unless-stopped` in the compose file. Redis and the application containers will also restart automatically once you add that policy. Run `up -d` again after any changes to the compose file.
-
-**Using a domain name and TLS:**
-
-For a production-like setup, place a reverse proxy in front of the adapters. Example with Caddy (auto-TLS via Let's Encrypt):
-
-```
-bap.yourdomain.com {
-    reverse_proxy localhost:8081
-}
-
-bpp.yourdomain.com {
-    reverse_proxy localhost:8082
-}
-```
-
-Once your domain is live, update the routing configs (`generic-routing-BAPReceiver.yaml` and `generic-routing-BPPCaller.yaml`) with the public URLs, and register your participant with the Beckn testnet registry (see [Customising the Starter Kit](#customising-the-starter-kit)).
-
----
-
-## Your First Transaction
-
-With the stack running, import the Postman collections and walk through a complete beckn transaction.
-
-**Import the collections**
-
-1. Open Postman and click **Import**.
-2. Navigate to `starter-kit/generic-devkit/postman/`.
-3. Import both files:
-   - `BAPBecknStarterKit.postman_collection.json` — the buyer side
-   - `BPPBecknStarterKit.postman_collection.json` — the provider side
-
-**Set the collection variables**
-
-Each collection has a `bap_adapter_url` / `bpp_adapter_url` variable that tells Postman where the ONIX adapters are reachable. For local deployment:
-
-- `bap_adapter_url` → `http://localhost:8081/bap/caller`
-- `bpp_adapter_url` → `http://localhost:8082/bpp/caller`
-
-For a VPS, replace `localhost` with your server's IP or domain.
-
-**Run in this order**
-
-The two collections together cover everything a BAP and a BPP need to do. Run them in this sequence:
-
-```
-[BPP] publish         ← BPP registers its catalog with the Catalog Service
-[BAP] discover        ← BAP queries the Discovery Service for available offerings
-[BAP] select          ← BAP selects a specific offering
-[BAP] init            ← BAP initiates the order
-[BAP] confirm         ← BAP confirms the transaction
-```
-
-The `on_*` callbacks (`on_discover`, `on_select`, `on_init`, `on_confirm`) are sent asynchronously by the network and received automatically by the applications — you do not need to trigger them manually. The BPP collection also contains `on_select`, `on_init`, and `on_confirm` requests if you want to simulate or inspect the BPP responses manually.
-
-After each step, check the `onix-bap` and `onix-bpp` logs to see the message being processed.
-
----
-
-## How It All Works
-
-Now that you have seen the network in action, here is a deeper look at how the pieces fit together.
-
-### The Services in This Stack
-
-```
-  ┌──────────────────────────────────────────────────────────────┐
-  │                      Your Environment                        │
-  │                                                              │
-  │  ┌──────────────┐     ┌────────────────────────────────────┐ │
-  │  │   app-bap    │◄───►│  onix-bap  (port 8081)             │ │
-  │  │  BAP app     │     │  BAP-side ONIX adapter             │ │
-  │  └──────────────┘     │  /bap/caller/   /bap/receiver/     │ │
-  │                       └──────────────────────┬─────────────┘ │
-  │                                              │               │
-  │  ┌──────────────┐     ┌────────────────────────────────────┐ │
-  │  │   app-bpp    │◄───►│  onix-bpp  (port 8082)             │ │
-  │  │  BPP app     │     │  BPP-side ONIX adapter             │ │
-  │  └──────────────┘     │  /bpp/receiver/  /bpp/caller/      │ │
-  │                       └──────────────────────┬─────────────┘ │
-  │                                              │               │
-  │  ┌──────────────────────────────────────┐    │               │
-  │  │  redis  (shared cache, port 6379)    │    │               │
-  │  └──────────────────────────────────────┘    │               │
-  └─────────────────────────────────────────────┼───────────────┘
-                                                │
-                           ┌────────────────────┴──────────────────┐
-                           ▼                                       ▼
-          ┌─────────────────────────────┐     ┌─────────────────────────────┐
-          │        Beckn Fabric         │     │      Discovery Service      │
-          │                             │     │   (independent service)     │
-          │  DeDi Registry              │     │                             │
-          │  · Identity lookups         │     │  Receives discover from     │
-          │  · Dynamic routing          │     │  BAPs, queries Fabric       │
-          │    (resolves BAP/BPP URIs)  │     │  catalog, returns           │
-          │                             │     │  on_discover                │
-          │  Catalog Service            │     └─────────────────────────────┘
-          │  · BPP publishes offerings  │
-          │  · Feeds Discovery Service  │
-          └─────────────────────────────┘
-```
-
-| Service | Image | Port | Role |
-|---------|-------|------|------|
-| `onix-bap` | `fidedocker/onix-adapter` | 8081 | BAP-side protocol adapter |
-| `onix-bpp` | `fidedocker/onix-adapter` | 8082 | BPP-side protocol adapter |
-| `app-bap` | `fidedocker/sandbox-2.0` | 3001 | Simulates a BAP application |
-| `app-bpp` | `fidedocker/sandbox-2.0` | 3002 | Simulates a BPP application |
-| `redis` | `redis:alpine` | 6379 | Shared request/response cache |
-
-**The ONIX adapter** (`fidedocker/onix-adapter`) is the core middleware from the [beckn-onix](https://github.com/beckn/beckn-onix) project. It is a plugin-based Go server that handles signing, signature validation, schema validation, and routing for every beckn message. Both `onix-bap` and `onix-bpp` run the same binary — their behaviour is entirely determined by their config files.
-
-**The application simulator** (`fidedocker/sandbox-2.0`) is a generic beckn application simulator. It exposes simple HTTP endpoints that receive forwarded messages and generate appropriate responses, so you can observe the full protocol flow without building your own BAP or BPP app yet.
-
-### Beckn Fabric: Registry and Catalog Service
-
-**Beckn Fabric** is the shared infrastructure layer that makes an open beckn network possible. Without Fabric, each participant would need bilateral agreements with every other participant. Fabric removes that requirement by providing shared, trustless services that the whole network relies on.
-
-This starter kit uses two Beckn Fabric services, both hosted at `fabric.nfh.global`, plus an independent Discovery Service that runs alongside but outside of Fabric:
-
-**DeDi Registry** (`fabric.nfh.global/registry/dedi`)
-
-The DeDi (Decentralised Discovery) Registry is the source of truth for participant identity on the network. Every BAP and BPP registers their network ID, public key, and callback URI with the registry. The ONIX adapter consults the registry for two things:
-
-- **Signature validation** — when an inbound message arrives, the adapter looks up the sender's public key in the registry to verify the digital signature. If the key is not found or the signature is invalid, the message is rejected.
-- **Routing** — when a message needs to reach a BPP (e.g., `select`) or return to a BAP (e.g., `on_select`), the adapter performs a registry lookup by participant ID to resolve the correct callback URL. This is how the network routes messages without any static config between participants.
-
-The registry is referenced in all four adapter config files under the `registry` plugin:
-```yaml
-registry:
-  id: dediregistry
-  config:
-    url: https://fabric.nfh.global/registry/dedi
-    registryName: subscribers.beckn.one
-```
-
-**Catalog Service** (`fabric.nfh.global/beckn/catalog`)
-
-The Catalog Service is where BPPs publish their offerings. When a BPP calls `publish` (via `onix-bpp`), the adapter signs the message and forwards it to the Catalog Service. The Catalog Service stores the offering and responds with an `on_publish` callback to the BPP. This is how a BPP makes its catalog available for discovery without needing a direct connection to any BAP.
-
-The Catalog Service endpoint is configured in `generic-routing-BPPCaller.yaml`:
-```yaml
-target:
-  url: "https://fabric.nfh.global/beckn/catalog"
-endpoints:
-  - publish
-```
-
-**Discovery Service** (`<discovery-service>`)
-
-The Discovery Service is an independent network service — not part of Beckn Fabric — that acts as the search engine for the network. It queries the catalogs that BPPs have published to the Fabric Catalog Service and serves matching results to BAPs. When a BAP sends a `discover` request, the adapter routes it to the Discovery Service, which responds asynchronously with an `on_discover` callback. The BAP never contacts a BPP directly during discovery — direct BAP-to-BPP communication only begins at `select`.
-
-The Discovery Service endpoint is configured in `generic-routing-BAPCaller.yaml`:
-```yaml
-target:
-  url: "https://<discovery-service>/beckn"
-endpoints:
-  - discover
-```
-
-### The Full Transaction Flow
-
-Here is the complete picture of how a beckn transaction flows through the network, showing the correct roles of the two Beckn Fabric services and the Discovery Service:
-
-```
-BPP side — catalog setup (happens before any BAP transaction)
-─────────────────────────────────────────────────────────────────
-
-app-bpp ──publish──► onix-bpp ──publish──► Catalog Service (Fabric)
-                                                    │
-app-bpp ◄──on_publish── onix-bpp ◄──on_publish─────┘
-(catalog accepted; BPP offerings are now discoverable)
-
-
-BAP side — discovery
-─────────────────────────────────────────────────────────────────
-
-app-bap ──discover──► onix-bap ──discover──► Discovery Service
-                                                    │
-                                     (queries Fabric catalog)
-                                                    │
-app-bap ◄──on_discover── onix-bap ◄──on_discover───┘
-(BAP receives list of matching offerings)
-
-
-BAP ↔ BPP — transaction (select / init / confirm)
-─────────────────────────────────────────────────────────────────
-
-app-bap ──select──► onix-bap
-                        │ DeDi Registry resolves BPP URI
-                        ▼
-                    onix-bpp ──► app-bpp
-                        │
-                    app-bpp sends on_select response
-                        │
-                    onix-bpp
-                        │ DeDi Registry resolves BAP URI
-                        ▼
-app-bap ◄──on_select── onix-bap
-
-     ... same pattern repeats for init / confirm ...
-```
-
-The key insight: **discovery always goes through the Discovery Service** (BAP → Discovery Service), and **post-discovery transactions flow directly between BAP and BPP** with the DeDi Registry providing dynamic routing. The BPP also uses Fabric to publish its catalog before any discovery can happen.
-
-### Tracing a Request End-to-End
-
-Here is the step-by-step journey of a single `discover` call, showing what happens inside each service:
-
-**1. Postman → onix-bap**
-You trigger a `discover` by POSTing to onix-bap's caller endpoint (`/bap/caller/discover`). The `bapTxnCaller` module picks it up.
-
-**2. addRoute** — the adapter reads `generic-routing-BAPCaller.yaml` and matches the `discover` action to the configured Discovery Service URL.
-
-**3. sign** — the adapter signs the request body using the Ed25519 private key defined under `keyManager` in `generic-bap.yaml` (identity: `bap.example.com`).
-
-**4. validateSchema** — the Beckn v2.0.0 OpenAPI spec is fetched from GitHub (cached for 1 hour) and the message is validated against it.
-
-**5. Request → Discovery Service** — the signed, validated `discover` message is forwarded to the Discovery Service.
-
-**6. Discovery Service → on_discover callback** — the Discovery Service searches its catalog index and asynchronously POSTs `on_discover` back to onix-bap's receiver endpoint (`/bap/receiver/on_discover`).
-
-**7. validateSign** — the `bapTxnReceiver` module verifies the Discovery Service's digital signature by looking up its public key in the DeDi Registry.
-
-**8. addRoute** — reads `generic-routing-BAPReceiver.yaml`, which routes all `on_*` callbacks to the app-bap webhook.
-
-**9. app-bap receives on_discover** — the response (list of available offerings) is now stored in the application and visible in logs.
-
-For `select`, `init`, and `confirm`, the flow is similar but the adapter uses the DeDi Registry to resolve the BPP's URI dynamically (no hardcoded URL needed), and onix-bpp uses the registry to resolve the BAP's callback URI for the `on_*` responses.
-
----
-
-## Repository Structure
+## Project Structure
 
 ```
 starter-kit/
+├── bpp-api/                              # OUR CODE
+│   ├── Dockerfile                        # Builds the bpp-api container
+│   ├── package.json                      # Dependencies: express, pg, axios
+│   ├── package-lock.json                 # Exact dependency versions (ensures reproducible builds)
+│   ├── migrations/
+│   │   ├── 001_schema.sql                # Creates tables (runs on every startup, idempotent)
+│   │   └── 002_seed.sql                  # Inserts 4 sample agents (idempotent)
+│   └── src/
+│       ├── index.js                      # Express server, routes, webhook dispatcher
+│       ├── db.js                         # PostgreSQL connection pool
+│       ├── beckn.js                      # Beckn response builder + callback sender
+│       ├── migrate.js                    # Runs SQL migrations on startup
+│       └── handlers/
+│           ├── publish.js                # Save agents to DB + publish catalog to Fabric
+│           ├── discover.js               # Search agents → on_discover
+│           ├── select.js                 # Agent details → on_select
+│           ├── init.js                   # Create transaction → on_init
+│           └── confirm.js                # Execute agent (mock LLM) → on_confirm
 │
-└── generic-devkit/
-    │
-    ├── config/                               # All adapter configuration
-    │   ├── generic-bap.yaml                  # BAP adapter: modules, plugins, keys
-    │   ├── generic-bpp.yaml                  # BPP adapter: modules, plugins, keys
-    │   ├── generic-routing-BAPCaller.yaml    # Where BAP sends outbound requests
-    │   ├── generic-routing-BAPReceiver.yaml  # Where BAP delivers incoming callbacks
-    │   ├── generic-routing-BPPCaller.yaml    # Where BPP sends outbound responses
-    │   └── generic-routing-BPPReceiver.yaml  # Where BPP delivers incoming requests
-    │
-    ├── install/
-    │   ├── docker-compose-generic.yml        # Main compose file (pre-built adapter image)
-    │   └── docker-compose-generic-local.yml  # Alternate compose file (locally built image)
-    │
-    └── postman/
-        ├── BAPBecknStarterKit.postman_collection.json   # BAP-side flows
-        └── BPPBecknStarterKit.postman_collection.json   # BPP-side flows
+├── generic-devkit/                       # BECKN INFRASTRUCTURE (not our code)
+│   ├── config/                           # ONIX adapter configuration (YAML)
+│   │   ├── generic-bap.yaml             # BAP adapter: keys, plugins, registry
+│   │   ├── generic-bpp.yaml             # BPP adapter: keys, plugins, registry
+│   │   └── generic-routing-*.yaml       # Routing rules (where to send each action)
+│   ├── install/
+│   │   ├── docker-compose-marketplace.yml  # USE THIS — our full stack
+│   │   ├── docker-compose-generic.yml      # Original Beckn starter (not ours)
+│   │   └── docker-compose-generic-local.yml
+│   └── postman/
+│       ├── MarketplaceBPP.postman_collection.json  # Provider: publish agents
+│       ├── MarketplaceBAP.postman_collection.json  # Consumer: discover/select/init/confirm
+│       ├── BAPBecknStarterKit.postman_collection.json  # Original Beckn examples
+│       └── BPPBecknStarterKit.postman_collection.json  # Original Beckn examples
+│
+└── README.md                             # Original Beckn starter-kit docs
 ```
-
-### config/ — How Each File Is Used
-
-Each ONIX adapter instance loads one primary config file, which in turn references routing config files for each module.
-
-**`generic-bap.yaml`** — loaded by onix-bap. Defines two modules:
-
-- `bapTxnCaller` at `/bap/caller/` handles **outbound** BAP requests. It signs each message, routes it using `generic-routing-BAPCaller.yaml`, and validates the schema.
-- `bapTxnReceiver` at `/bap/receiver/` handles **inbound** `on_*` callbacks. It validates the sender's signature (via DeDi Registry lookup), routes the response to app-bap using `generic-routing-BAPReceiver.yaml`, and validates the schema.
-
-**`generic-bpp.yaml`** — loaded by onix-bpp. Defines two modules:
-
-- `bppTxnReceiver` at `/bpp/receiver/` handles **inbound** action requests from BAPs. It validates signatures and routes to app-bpp using `generic-routing-BPPReceiver.yaml`.
-- `bppTxnCaller` at `/bpp/caller/` handles **outbound** `on_*` responses and `publish` calls. It signs messages and routes them using `generic-routing-BPPCaller.yaml`.
-
-**`generic-routing-BAPCaller.yaml`** — outbound routing for the BAP:
-- `discover` → routes to the Discovery Service (`https://<discovery-service>/beckn`)
-- All transaction actions (`select`, `init`, `confirm`, `status`, `track`, `update`, `cancel`, `rate`, `support`) → `targetType: bpp`, resolved dynamically via DeDi Registry lookup
-
-**`generic-routing-BAPReceiver.yaml`** — all inbound `on_*` callbacks are routed to app-bap's webhook endpoint.
-
-**`generic-routing-BPPReceiver.yaml`** — all inbound action requests and `on_publish` callbacks are routed to app-bpp's webhook endpoint.
-
-**`generic-routing-BPPCaller.yaml`** — outbound routing for the BPP:
-- All `on_*` responses (`on_select`, `on_init`, `on_confirm`, etc.) → `targetType: bap`, resolved dynamically via DeDi Registry lookup
-- `publish` → routes to the Fabric Catalog Service (`https://fabric.nfh.global/beckn/catalog`)
-
-Both config files embed a **`keyManager`** section with pre-generated Ed25519 key pairs for testnet participants `bap.example.com` and `bpp.example.com`. These are registered with the DeDi Registry on `beckn.one/testnet` and work out of the box — no changes needed to get started.
-
-### postman/ — What the Collections Do
-
-**`BAPBecknStarterKit.postman_collection.json`** — the buyer-side flows, organised in two folders:
-
-- **1 — Discovery:** `discover` — sent to onix-bap (`/bap/caller/discover`), which routes it to the Discovery Service.
-- **2 — Transaction:** `select` → `init` → `confirm` — sent to onix-bap, which routes each to the BPP via DeDi Registry lookup.
-
-**`BPPBecknStarterKit.postman_collection.json`** — the provider-side flows, organised in two folders:
-
-- **1 — Transaction:** `on_select`, `on_init`, `on_confirm` — sent to onix-bpp (`/bpp/caller/on_*`). Use these to manually simulate or inspect BPP responses. In a normal flow app-bpp handles these automatically.
-- **2 — Catalog Publishing:** `publish` — sent to onix-bpp (`/bpp/caller/publish`), which routes it to the Fabric Catalog Service. Run this before `discover` to populate the catalog.
 
 ---
 
-## Customising the Starter Kit
+## How It Works
 
-**Changing the Discovery Service or Catalog Service endpoint**
+### Transaction Flow
 
-Edit `config/generic-routing-BAPCaller.yaml` to point `discover` at a different Discovery Service. Edit `config/generic-routing-BPPCaller.yaml` to point `publish` at a different Catalog Service endpoint.
+```
+1. [Provider]  publish   → Registers agents in DB + publishes catalog to Fabric
+2. [Consumer]  discover  → Searches agents via Discovery Service
+3. [Consumer]  select    → Gets agent details and pricing
+4. [Consumer]  init      → Creates a transaction (status: INITIALIZED)
+5. [Consumer]  confirm   → Executes the agent (status: COMPLETED)
+```
 
-**Running fully offline (no external dependencies)**
+**publish** and **discover** involve external Fabric services.
+**select**, **init**, **confirm** are fully local (BAP ↔ BPP within Docker network).
 
-Change the `discover` target in `generic-routing-BAPCaller.yaml` to route directly to onix-bpp's receiver endpoint (`http://onix-bpp:8082/bpp/receiver/`). You will also need to remove or stub the DeDi Registry lookups for the routing to work without network access.
+### What Each Handler Does
 
-**Using your own participant identity**
+| Handler | Trigger | What it does | DB operation |
+|---------|---------|-------------|-------------|
+| `publish.js` | `POST /api/publish` | Upserts agents in DB, publishes catalog to Fabric via ONIX | Write |
+| `discover.js` | webhook `discover` | Searches agents by keyword (ILIKE) | Read |
+| `select.js` | webhook `select` | Returns agent details + pricing contract | Read |
+| `init.js` | webhook `init` | Creates transaction record | Write |
+| `confirm.js` | webhook `confirm` | Executes agent (mock LLM), updates transaction | Write |
 
-The config files contain pre-generated testnet key pairs for `bap.example.com` and `bpp.example.com`, registered on `beckn.one/testnet`. To use your own identity:
+The webhook handlers receive requests at `POST /api/webhook` routed from ONIX. They return `ACK` immediately and process asynchronously, sending `on_*` callbacks back through ONIX.
 
-1. Generate a new Ed25519 key pair.
-2. Register your `networkParticipant` domain and public key with the DeDi Registry at `fabric.nfh.global/registry/dedi`.
-3. Update the `keyManager` section in `generic-bap.yaml` and `generic-bpp.yaml` with your new participant ID, key ID, and key material.
-4. Update the routing config files to use your `networkId` in place of `beckn.one/testnet`.
+### Database
 
-**Replacing the application simulator with your own application**
+PostgreSQL runs inside Docker. On startup, `migrate.js` creates the schema and seeds sample data.
 
-The application simulator containers (`app-bap` and `app-bpp`) are simple simulators. Replace either with your own application by updating the service image and webhook URLs in the compose file and routing configs. Your application needs to accept POSTed beckn messages at the configured endpoints and be on the same Docker network.
+**Tables:**
 
-**Using a different beckn domain**
+| Table | Purpose |
+|-------|---------|
+| `categories` | Agent categories (AI-SUMMARIZATION, AI-EXTRACTION, etc.) |
+| `ai_providers` | Companies that publish agents |
+| `ai_agents` | The agents themselves (name, capabilities, pricing, schemas) |
+| `users` | Consumers (BAP users) |
+| `transactions` | Transaction lifecycle (request, response, status, cost) |
 
-Update the `domain` (or `networkId`) field in all four routing YAML files to match your domain. Point the `schemav2validator` in the adapter config to the appropriate OpenAPI spec URL for schema validation.
+**Data persistence:**
+- Data is stored in a Docker volume (`pgdata`) and survives `docker compose down`
+- Data is destroyed with `docker compose down -v`
+- Migrations are idempotent — safe to run repeatedly
+
+**Seeded agents (4):**
+
+| Agent | Category | Provider | Price |
+|-------|----------|----------|-------|
+| DocSummarizer Pro | AI-SUMMARIZATION | neuralspark-ai.beckn | $0.05 |
+| DataExtract Engine | AI-EXTRACTION | neuralspark-ai.beckn | $0.08 |
+| PolyLang Translator | AI-TRANSLATION | lingualab.beckn | $0.03 |
+| CodeAssist AI | AI-CODE-GENERATION | lingualab.beckn | $0.10 |
+
+---
+
+## Testing with Postman
+
+### Import collections
+
+From `generic-devkit/postman/`, import:
+- **MarketplaceBPP** — Provider actions (publish agents)
+- **MarketplaceBAP** — Consumer actions (discover, select, init, confirm)
+
+### Publish agents (Provider side)
+
+1. Open **MarketplaceBPP** collection
+2. Go to the **Variables** tab — edit your agent details
+3. Click **"publish single agent"** → Send
+
+Or use **"publish multiple agents (batch)"** to register all 4 demo agents at once.
+
+### Run the transaction (Consumer side)
+
+Run **MarketplaceBAP** requests in this order:
+1. `discover` — find available agents
+2. `select` — get details on a specific agent
+3. `init` — start a transaction
+4. `confirm` — execute the agent
+
+---
+
+## Testing with curl
+
+```bash
+# Health check
+curl http://localhost:3002/api/health
+
+# List all agents in the marketplace
+curl http://localhost:3002/api/agents
+
+# List all transactions
+curl http://localhost:3002/api/transactions
+
+# Publish a new agent
+curl -X POST http://localhost:3002/api/publish \
+  -H "Content-Type: application/json" \
+  -d '{
+  "agents": [
+    {
+      "category_id": "AI-SENTIMENT",
+      "category_display_name": { "en": "Sentiment Analysis", "es": "Analisis de Sentimiento" },
+      "provider_subscriber_id": "my-company.beckn",
+      "provider_bpp_uri": "https://api.my-company.com",
+      "provider_public_key": "ed25519_pub_key_placeholder",
+      "agent_name": { "en": "SentimentBot Pro" },
+      "access_point_url": "https://api.my-company.com/v1/sentiment",
+      "interaction_type": "sync",
+      "version": "1.0.0",
+      "capabilities": ["sentiment", "opinion-mining", "emotion-detection"],
+      "input_schema": { "type": "object", "properties": { "text": { "type": "string" } } },
+      "output_schema": { "type": "object", "properties": { "sentiment": { "type": "string" }, "score": { "type": "number" } } },
+      "pricing_model": { "type": "per_request", "value": 0.02, "currency": "USD" }
+    }
+  ]
+}'
+```
+
+---
+
+## Configuration
+
+### Environment variables (bpp-api)
+
+Defined in `docker-compose-marketplace.yml`. No `.env` file needed.
+
+| Variable | Value | Description |
+|----------|-------|-------------|
+| `PORT` | 3002 | Server port |
+| `DB_HOST` | postgres | PostgreSQL container hostname |
+| `DB_PORT` | 5432 | PostgreSQL port (internal) |
+| `DB_NAME` | beckn_ai_marketplace | Database name |
+| `DB_USER` | postgres | Database user |
+| `DB_PASSWORD` | PassTest12? | Database password |
+| `ONIX_BPP_CALLER` | http://onix-bpp:8082/bpp/caller | ONIX callback endpoint |
+
+### ONIX adapter configs
+
+Located in `generic-devkit/config/`. These configure signing keys, DeDi Registry URLs, schema validation, and routing rules. Pre-configured for `beckn.one/testnet` — no changes needed to get started.
+
+### Accessing the database directly
+
+```bash
+# From your host
+docker exec -it postgres-beckn psql -U postgres -d beckn_ai_marketplace
+
+# Example queries
+SELECT agent_name->>'en' AS name, category_id, status FROM ai_agents;
+SELECT * FROM transactions ORDER BY created_at DESC;
+```
 
 ---
 
 ## Troubleshooting
 
-**Containers fail to start**
+**bpp-api won't start or crashes**
+```bash
+docker logs bpp-api
+```
+Most common cause: postgres not ready yet. The healthcheck dependency should handle this, but check if postgres-beckn is healthy.
 
-Check for port conflicts on 8081, 8082, 3001, 3002, or 6379:
-
-```shell
-docker compose -f docker-compose-generic.yml logs
+**List agents hangs or times out**
+Database connection issue. Verify postgres is running:
+```bash
+docker exec postgres-beckn pg_isready -U postgres
 ```
 
-**app-bap or app-bpp stays in `starting` state**
-
-The application containers health-check at `/api/health`. If they don't reach `healthy` within about a minute, inspect their logs. Note that the Docker container names in the compose file are `sandbox-bap` and `sandbox-bpp` (use those in Docker commands even though we refer to them conceptually as `app-bap` / `app-bpp`):
-
-```shell
-docker compose -f docker-compose-generic.yml logs sandbox-bap
-docker compose -f docker-compose-generic.yml logs sandbox-bpp
+**publish returns 502 (partial)**
+Agents were saved to DB but Fabric publish failed. Check ONIX connectivity:
+```bash
+docker logs onix-bpp --tail 20
 ```
 
-**Postman requests return connection errors**
+**Port conflicts**
+Default ports: 3001, 3002, 5433, 6379, 8081, 8082. If any are in use, edit `docker-compose-marketplace.yml`.
 
-Confirm the stack is fully up (`docker compose ps` shows all five containers as `running` or `healthy`) and that your Postman collection variables point to the right host and port.
-
-**Signature validation failures (`validateSign` errors in logs)**
-
-The most common cause is clock skew. Beckn signatures embed a timestamp with a short validity window. On Linux: `timedatectl` to check clock sync. On Docker Desktop, ensure the VM clock is synchronised.
-
-**`discover` returns no results**
-
-The Discovery Service must be reachable. Check the URL configured in `generic-routing-BAPCaller.yaml` and test connectivity with:
-
-```shell
-curl -s https://<discovery-service>/beckn
-```
-
-If it times out, the testnet may be temporarily unavailable, or your network may block outbound HTTPS. Also check whether `publish` was called first — the Discovery Service can only return results for offerings that have been published to the Catalog Service.
-
-**`publish` or `on_publish` not working**
-
-Confirm the Catalog Service endpoint in `generic-routing-BPPCaller.yaml` is reachable (`curl -s https://fabric.nfh.global/beckn/catalog`). Also verify the BPP's signing keys are valid by reviewing the `keyManager` section in `generic-bpp.yaml`.
-
-**Images fail to pull**
-
-Ensure Docker has at least 2 GB RAM allocated and a stable internet connection for pulling the required images.
-
-**Stopping and cleaning up**
-
-```shell
-# Stop containers
-docker compose -f docker-compose-generic.yml down
-
-# Stop and remove volumes and image cache
-docker compose -f docker-compose-generic.yml down -v
+**Reset everything (fresh start)**
+```bash
+cd generic-devkit/install
+docker compose -f docker-compose-marketplace.yml down -v
+docker compose -f docker-compose-marketplace.yml up --build
 ```
