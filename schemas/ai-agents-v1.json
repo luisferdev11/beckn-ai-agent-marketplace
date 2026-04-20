@@ -50,12 +50,23 @@
       }
     },
     "dataResidency": { "type": "string" },
-    "startedAt": { "type": "string" },
-    "completedAt": { "type": "string" },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "completedAt": { "type": "string", "format": "date-time" },
     "latencyMs": { "type": "integer" },
-    "tokensConsumed": { "type": "integer" },
+    "tokensUsed": {
+      "type": "object",
+      "properties": {
+        "input":  { "type": "integer" },
+        "output": { "type": "integer" },
+        "total":  { "type": "integer" }
+      }
+    },
+    "model": { "type": "string", "description": "LLM model name used for execution" },
     "result": { "type": "object" },
-    "status": { "type": "string" }
+    "status": {
+      "type": "string",
+      "enum": ["PENDING", "RUNNING", "COMPLETED", "FAILED"]
+    }
   },
   "required": ["@context", "@type"]
 }
