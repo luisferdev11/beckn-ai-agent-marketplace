@@ -4,8 +4,8 @@ Orchestrates AI agent execution for the Beckn AI Agent Marketplace.
 
 ## Current state
 
-**Placeholder** — returns mock responses. The orchestrator team is developing
-this service in parallel.
+**Implemented.** The orchestrator receives tasks from the BPP, calls the agents service,
+and stores execution state in memory. The BPP polls `GET /execute/{id}` from `handle_status`.
 
 ## How to integrate your work
 
@@ -28,27 +28,19 @@ Content-Type: application/json
 {
     "contract_id": "contract-001",
     "agent_id": "agent-summarizer-001",
+    "agent_url": "http://agents:3004",
     "input": {
-        "text": "Document content to process...",
-        "language": "en"
-    }
+        "text": "Document content to process..."
+    },
+    "timeout_ms": 30000
 }
 ```
 
-**Response:**
+**Response (ACK — immediate):**
 ```json
 {
     "execution_id": "exec-uuid",
-    "status": "PENDING | RUNNING | COMPLETED | FAILED",
-    "result": {
-        "summary": "The processed output..."
-    },
-    "metadata": {
-        "startedAt": "2026-04-16T10:00:00Z",
-        "completedAt": "2026-04-16T10:00:03Z",
-        "latencyMs": 3200,
-        "tokensConsumed": 4200
-    }
+    "status": "PENDING"
 }
 ```
 
@@ -58,7 +50,30 @@ Content-Type: application/json
 GET /execute/{execution_id}
 ```
 
-Returns same response shape as above.
+**Response:**
+```json
+{
+    "execution_id": "exec-uuid",
+    "contract_id": "contract-001",
+    "agent_id": "agent-summarizer-001",
+    "status": "COMPLETED",
+    "result": {
+        "summary": "The processed output..."
+    },
+    "error": null,
+    "metadata": {
+        "started_at": "2026-04-16T10:00:00.000Z",
+        "completed_at": "2026-04-16T10:00:03.200Z",
+        "latency_ms": 3200,
+        "tokens_used": {
+            "input": 400,
+            "output": 120,
+            "total": 520
+        },
+        "model": "llama3-70b-8192"
+    }
+}
+```
 
 ## Architecture notes
 

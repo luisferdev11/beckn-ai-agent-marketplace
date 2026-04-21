@@ -18,31 +18,50 @@ Individual AI agents that perform tasks (summarization, code review, data extrac
 The orchestrator calls your service to run a specific agent.
 
 ```
-POST /run/<agent-id>
+POST /task?agent_id=<agent-id>
+Content-Type: application/json
+
 {
-    "input": {
-        "text": "Content to process...",
-        "language": "en",
-        "options": { ... }
-    },
-    "config": {
-        "max_tokens": 4096,
-        "temperature": 0.7
-    }
+    "text": "Content to process...",
+    "language": "en"
 }
 ```
+
+The request body is a flat dict — no wrapper. The `agent_id` comes as a query param
+so a single `/task` endpoint can dispatch to different agents.
 
 **Response:**
 ```json
 {
+    "status": "success",
     "result": {
-        "summary": "The processed output...",
-        "confidence": 0.94
+        "summary": "The processed output..."
     },
-    "metadata": {
-        "model": "claude-sonnet-4-5-20250514",
-        "tokensConsumed": 4200,
-        "latencyMs": 3200
+    "error": null,
+    "usage": {
+        "model_used": "llama3-70b-8192",
+        "input_tokens": 400,
+        "output_tokens": 120,
+        "latency_ms": 3200
+    }
+}
+```
+
+On failure, return `"status": "error"` with an `error` object:
+
+```json
+{
+    "status": "error",
+    "result": null,
+    "error": {
+        "code": "MODEL_TIMEOUT",
+        "message": "LLM did not respond within the timeout"
+    },
+    "usage": {
+        "model_used": "",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "latency_ms": 0
     }
 }
 ```
@@ -58,6 +77,5 @@ Currently hardcoded in `services/bpp/app/catalog_data.py` — coordinate with th
 
 ## Docker
 
-When ready, uncomment the `agents` service in `infra/docker-compose.yml`.
 Runs on port **3004** inside `beckn_network`.
-The orchestrator reaches agents at `http://agents:3004/run/<agent-id>`.
+The orchestrator reaches agents at `http://agents:3004/task?agent_id=<agent-id>`.

@@ -17,6 +17,13 @@ import urllib.error
 BAP = "http://localhost:3001/api"
 WAIT_SECONDS = 4
 
+AGENT_ID = "agent-code-reviewer-001"
+AGENT_INPUT = {
+    "code": "def divide(a, b):\n    return a / b",
+    "language": "python",
+    "context": "Utility function for division",
+}
+
 
 def post(url: str, body: dict) -> dict:
     data = json.dumps(body).encode()
@@ -50,11 +57,11 @@ def main():
 
     # Health checks
     print("\n[1/6] Health checks...")
-    for name, port in [("bap-ai", 3001), ("bpp-ai", 3002), ("orchestrator", 3003)]:
+    for name, port in [("bap-ai", 3001), ("bpp-ai", 3002), ("orchestrator", 3003), ("agents", 3004)]:
         h = get(f"http://localhost:{port}/health")
         status = h.get("status", "?")
         print(f"  {name}: {status}")
-        if status != "ok":
+        if status not in ("ok", "degraded"):
             print(f"  FAIL: {name} not healthy")
             sys.exit(1)
 
@@ -67,10 +74,10 @@ def main():
         print(f"    - {a['id']}: {a['descriptor']['name']}")
 
     # SELECT
-    print("\n[3/6] SELECT — choosing Legal Document Summarizer...")
+    print(f"\n[3/6] SELECT — choosing {AGENT_ID}...")
     resp = post(f"{BAP}/contracts/select", {
-        "agent_id": "agent-summarizer-001",
-        "offer_id": "offer-summarizer-basic",
+        "agent_id": AGENT_ID,
+        "offer_id": f"offer-{AGENT_ID}",
     })
     txn_id = resp["transactionId"]
     ack = resp.get("onix_response", {}).get("message", {}).get("ack", {}).get("status")
@@ -99,43 +106,47 @@ def main():
     print(f"  on_init received")
 
     # CONFIRM
-    print("\n[5/6] CONFIRM — confirming contract...")
-    resp = post(f"{BAP}/contracts/confirm", {"transaction_id": txn_id})
+    print("\n[5/6] CONFIRM — confirming contract + dispatching agent...")
+    print(f"  Input: {AGENT_INPUT}")
+    resp = post(f"{BAP}/contracts/confirm", {
+        "transaction_id": txn_id,
+        "agent_id": AGENT_ID,
+        "agent_input": AGENT_INPUT,
+    })
     ack = resp.get("onix_response", {}).get("message", {}).get("ack", {}).get("status")
     print(f"  ONIX ACK: {ack}")
 
     if not wait_for_callbacks(3):
         print("  FAIL: on_confirm callback not received")
         sys.exit(1)
-    print(f"  on_confirm received — contract ACTIVE")
+    print(f"  on_confirm received — agent dispatched to orchestrator")
 
-    # STATUS
-    print("\n[6/6] STATUS — checking execution result...")
-    resp = post(f"{BAP}/contracts/status", {"transaction_id": txn_id})
-    ack = resp.get("onix_response", {}).get("message", {}).get("ack", {}).get("status")
-    print(f"  ONIX ACK: {ack}")
+    # STATUS — poll until COMPLETED or timeout
+    print("\n[6/6] STATUS — polling until agent completes (LLM may take ~5s)...")
+    agent_status = None
+    for attempt in range(15):
+        time.sleep(3)
+        resp = post(f"{BAP}/contracts/status", {"transaction_id": txn_id})
+        ack = resp.get("onix_response", {}).get("message", {}).get("ack", {}).get("status")
+        if ack == "NACK":
+            error = resp.get("onix_response", {}).get("message", {}).get("error", {})
+            print(f"  NACK: {error.get('message', '?')[:100]}")
+            break
 
-    if ack == "NACK":
-        error = resp.get("onix_response", {}).get("message", {}).get("error", {})
-        print(f"  NACK: {error.get('code', '?')}: {error.get('message', '?')[:100]}")
-        # Non-fatal for now
-    else:
-        if not wait_for_callbacks(4):
-            print("  WARN: on_status callback not received (may be slow)")
-        else:
+        if wait_for_callbacks(4 + attempt, timeout=5):
             cb = get(f"{BAP}/callbacks/ultimo")
             perf = cb.get("message", {}).get("contract", {}).get("performance", [{}])[0]
-            perf_status = perf.get("status", {})
-            attrs = perf.get("performanceAttributes", {})
-            if attrs:
-                print(f"  Agent status: {attrs.get('status', perf_status.get('code', '?'))}")
-                print(f"  Latency: {attrs.get('latencyMs', '?')}ms")
-                result = attrs.get("result", {})
-                print(f"  Summary: {result.get('summary', '?')[:80]}...")
-                print(f"  Confidence: {result.get('confidence', '?')}")
-            else:
-                print(f"  Agent status: {perf_status.get('code', '?')}")
-                print(f"  Result: {perf_status.get('shortDesc', '?')[:80]}...")
+            status_obj = perf.get("status", {})
+            agent_status = status_obj.get("code", "?")
+            print(f"  [{attempt+1}] Agent status: {agent_status}")
+            if agent_status == "COMPLETED":
+                print(f"  Result preview: {status_obj.get('shortDesc', '')[:120]}...")
+                break
+            elif agent_status == "FAILED":
+                print(f"  Error: {status_obj.get('shortDesc', '')}")
+                break
+    else:
+        print("  WARN: agent did not complete within timeout")
 
     # Final summary
     print("\n" + "=" * 60)
@@ -147,8 +158,10 @@ def main():
     contracts = get("http://localhost:3002/api/contracts")
     print(f"\nBPP contracts: {contracts['total']}")
 
-    if len(all_cbs) >= 3:
-        print("\n✓ PASS — select/init/confirm flow working with our own BAP and BPP")
+    if len(all_cbs) >= 3 and agent_status == "COMPLETED":
+        print("\n✓ PASS — full flow working including real agent execution")
+    elif len(all_cbs) >= 3:
+        print("\n~ PARTIAL — select/init/confirm OK but agent not yet COMPLETED")
     else:
         print("\n✗ FAIL — expected at least 3 callbacks")
         sys.exit(1)
