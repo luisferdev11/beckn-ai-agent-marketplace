@@ -254,6 +254,8 @@ async def handle_status(context: dict, message: dict) -> dict:
     # Determine execution status from orchestrator
     exec_status = "PENDING"
     short_desc = "Execution pending"
+    result: dict = {}
+    metadata: dict = {}
 
     execution_id = stored.get("execution_id") if stored else None
     if execution_id:
@@ -261,6 +263,7 @@ async def handle_status(context: dict, message: dict) -> dict:
             exec_data = await orchestrator_client.get_execution(execution_id)
             exec_status = exec_data.get("status", "PENDING")
             result = exec_data.get("result") or {}
+            metadata = exec_data.get("metadata") or {}
             error = exec_data.get("error")
             if exec_status == "COMPLETED":
                 short_desc = result.get("review") or result.get("summary") or str(result)
@@ -272,15 +275,26 @@ async def handle_status(context: dict, message: dict) -> dict:
             logger.error("status: failed to poll orchestrator for execution %s: %s", execution_id, exc)
             short_desc = "Could not retrieve execution status"
 
-    # TODO: add performanceAttributes once schema is hosted at a public URL.
-    # ONIX fetches the @context URL to validate extended schemas — until
-    # schemas/ai-agents-v1.json is published, the result lives in shortDesc.
+    # Extended schema validation is disabled in ONIX (extendedSchema_enabled: false) —
+    # ONIX only checks @context and @type are present (base validation).
+    schema_url = "https://raw.githubusercontent.com/luisferdev11/beckn-ai-agent-marketplace/main/schemas/ai-agents-v1.json"
     performance = [{
         "id": "perf-001",
         "status": {
             "code": exec_status,
             "name": exec_status.replace("_", " ").title(),
             "shortDesc": short_desc[:500] if short_desc else "",
+        },
+        "performanceAttributes": {
+            "@context": schema_url,
+            "@type": "beckn:AgentExecution",
+            "startedAt": metadata.get("started_at") or (stored.get("confirmed_at") if stored else _now_iso()),
+            "completedAt": metadata.get("completed_at") or _now_iso(),
+            "latencyMs": metadata.get("latency_ms") or 0,
+            "tokensUsed": metadata.get("tokens_used") or {"input": 0, "output": 0, "total": 0},
+            "model": metadata.get("model") or "unknown",
+            "result": result,
+            "status": exec_status,
         },
     }]
 
