@@ -87,10 +87,34 @@ from beckn_models.context import ack_response, nack_response
 
 Si agregas modelos nuevos, ponlos en `libs/beckn_models/` y actualiza `__init__.py`.
 
+## Testing
+
+**Lee [`tests/TESTING.md`](tests/TESTING.md) antes de escribir tu primer test.**
+
+Lo esencial:
+
+- **TDD como default.** Escribe el test antes que el codigo. Para features planeados pero no implementados, usa `pytest.mark.xfail(strict=True)`.
+- **4 capas:** unit → contract → integration → e2e. Cada una testea una cosa distinta.
+- **Nunca hardcodees payloads Beckn** en tests. Usa las factories en `tests/factories/`.
+- **ONIX siempre mockeado** en unit/contract/integration. Solo los E2E lo golpean real.
+
+Correr:
+
+```bash
+make test              # suite completa (BAP + BPP)
+make test-bap          # solo BAP
+make test-bpp          # solo BPP
+make test-e2e          # E2E contra Docker (requiere docker compose up)
+make test-cov          # con reporte de cobertura
+make install-test      # instalar deps de testing
+```
+
+Antes de abrir un PR, corre `make test` y asegurate de que pase.
+
 ## Skills de Claude Code
 
 Cada equipo puede crear sus propias skills en `.claude/skills/<nombre>/SKILL.md`.
-Skills existentes: `/mp-status`, `/mp-flow`, `/mp-logs`.
+Skills existentes: `/mp-status`, `/mp-flow`, `/mp-logs`, `/pr`.
 
 ## Beckn v2 — lo que debes saber
 

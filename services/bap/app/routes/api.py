@@ -13,6 +13,8 @@ hardcoding values. The flow is:
   4. confirm → reads stored contract, changes settlement to COMPLETE
 """
 
+from __future__ import annotations
+
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -21,7 +23,7 @@ import httpx
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from typing import Optional
+from typing import List, Optional
 
 from app.config import BAP_CALLER_URL, BAP_ID, BAP_URI, BPP_ID, BPP_URI, NETWORK_ID
 from app.store import (
@@ -57,10 +59,14 @@ def _build_context(action: str, transaction_id: str | None = None) -> dict:
 
 async def _send_to_onix(action: str, payload: dict) -> dict:
     url = f"{BAP_CALLER_URL}/{action}"
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        response = await client.post(url, json=payload)
-        logger.info(f"→ {action} sent to {url} — HTTP {response.status_code}")
-        return response.json()
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.post(url, json=payload)
+            logger.info(f"→ {action} sent to {url} — HTTP {response.status_code}")
+            return response.json()
+    except (httpx.ConnectError, httpx.TimeoutException) as e:
+        logger.error(f"ONIX unreachable for {action}: {e}")
+        raise httpx.ConnectError(str(e)) from e
 
 
 # ── Transaction endpoints ────────────────────────────────────
@@ -254,6 +260,63 @@ async def status(req: TxnRequest):
     }
 
     result = await _send_to_onix("status", payload)
+    return {"transactionId": req.transaction_id, "onix_response": result}
+
+
+class DiscoverRequest(BaseModel):
+    transaction_id: Optional[str] = None
+    query: Optional[str] = None
+    category: Optional[str] = None
+    capabilities: Optional[List[str]] = None
+
+
+@router.post("/contracts/discover")
+async def discover(req: DiscoverRequest):
+    """Discover available AI agents matching optional filters."""
+    txn_id = req.transaction_id or str(uuid.uuid4())
+    ctx = _build_context("discover", txn_id)
+
+    intent: dict = {}
+    if req.query:
+        intent["descriptor"] = {"name": req.query}
+    if req.category:
+        intent["category"] = {"descriptor": {"code": req.category}}
+    if req.capabilities:
+        intent["tags"] = [{"code": "capabilities", "list": req.capabilities}]
+
+    payload = {
+        "context": ctx,
+        "message": {"intent": intent},
+    }
+
+    result = await _send_to_onix("discover", payload)
+    return {"transactionId": txn_id, "onix_response": result}
+
+
+@router.post("/contracts/cancel")
+async def cancel(req: TxnRequest):
+    """Cancel an active transaction."""
+    contract = get_transaction_contract(req.transaction_id)
+    ctx = _build_context("cancel", req.transaction_id)
+
+    commitments = contract.get("commitments", [])
+    if not commitments:
+        commitments = [{"id": "commitment-001", "status": {"descriptor": {"code": "CANCELLED"}}}]
+    else:
+        commitments = [{**c, "status": {"descriptor": {"code": "CANCELLED"}}} for c in commitments]
+
+    payload = {
+        "context": ctx,
+        "message": {
+            "contract": {
+                "id": contract.get("id", f"contract-{req.transaction_id[:8]}"),
+                "commitments": commitments,
+                "reason": {"descriptor": {"code": "BUYER_CANCEL", "name": "Cancelled by buyer"}},
+            }
+        },
+    }
+
+    result = await _send_to_onix("cancel", payload)
     return {"transactionId": req.transaction_id, "onix_response": result}
 
 

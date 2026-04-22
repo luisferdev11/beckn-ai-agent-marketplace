@@ -10,6 +10,7 @@ Each agent has:
 - resourceAttributes with AI-specific fields (capabilities, SLA, pricing)
 - An offer with pricing
 """
+from __future__ import annotations
 
 PROVIDER = {
     "id": "PROV-AI-001",

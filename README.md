@@ -77,11 +77,25 @@ beckn-ai-agent-marketplace/
 │   └── onix/                 # Configs ONIX (routing, llaves, plugins)
 ├── scripts/
 │   └── smoke_test.py         # Verifica flujo completo
+├── tests/
+│   ├── TESTING.md            # Estrategia de testing — LEER antes de escribir tests
+│   └── e2e/                  # Tests E2E contra Docker stack
 ├── docs/                     # Documentacion tecnica
 ├── .claude/skills/           # Skills de Claude Code para el equipo
 ├── CLAUDE.md                 # Instrucciones para asistentes de IA
 ├── CONTRIBUTING.md           # Guia de contribucion y ramas
+├── Makefile                  # Atajos: make test, make test-e2e, etc.
 └── README.md
+```
+
+## Testing
+
+TDD con 4 capas (unit, contract, integration, E2E). Lee [`tests/TESTING.md`](tests/TESTING.md) antes de escribir tests.
+
+```bash
+make test              # BAP + BPP (unit + integration, sin Docker)
+make test-e2e          # E2E contra el stack (requiere docker compose up)
+make test-cov          # Con reporte de cobertura
 ```
 
 ## Para cada equipo
