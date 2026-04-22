@@ -16,6 +16,7 @@ Verifica:
 curl http://localhost:3001/health   # marketplace (BAP)
 curl http://localhost:3002/health   # provider (BPP)
 curl http://localhost:3003/health   # orchestrator
+curl http://localhost:3004/health   # agents
 python scripts/smoke_test.py       # flujo completo
 ```
 
@@ -39,7 +40,7 @@ python scripts/smoke_test.py       # flujo completo
                                                                │
                                                         ┌──────▼──────┐
                                                         │   agents    │
-                                                        │ :3004 (fut.)│
+                                                        │    :3004    │
                                                         └─────────────┘
 ```
 
@@ -55,7 +56,7 @@ python scripts/smoke_test.py       # flujo completo
 | `bap-marketplace` | 3001 | BAP — backend comprador. Recibe callbacks, expone API REST | Beckn/Protocol |
 | `bpp-provider` | 3002 | BPP — backend proveedor. Catalogo de agentes, contratos, pricing | Beckn/Protocol + DB |
 | `orchestrator` | 3003 | Orquesta ejecucion de agentes IA | Orchestrator |
-| `agents` | 3004 | Agentes IA individuales (futuro) | Agentes IA |
+| `agents` | 3004 | Agentes IA individuales (code reviewer, summarizer, data extractor) | Agentes IA |
 
 ## Estructura del proyecto
 
@@ -65,7 +66,7 @@ beckn-ai-agent-marketplace/
 │   ├── bap/                  # marketplace — backend comprador (BAP)
 │   ├── bpp/                  # provider — backend proveedor (BPP)
 │   ├── orchestrator/         # orchestrator — ejecuta agentes
-│   ├── agents/               # agents — agentes IA individuales
+│   ├── agents/               # agents — agentes IA (code reviewer via LangChain+Groq)
 │   └── discovery/            # discovery service (Iter 1)
 ├── libs/
 │   └── beckn_models/         # Modelos Pydantic compartidos (Beckn v2 + AI agents)
@@ -93,16 +94,16 @@ Tu trabajo: agregar persistencia real (SQLite/Postgres) a marketplace y provider
 4. Coordina con el equipo Beckn al modificar modelos compartidos
 
 ### Si eres del equipo de Orchestrator
-Tu trabajo: reemplazar el placeholder con orquestacion real de agentes.
+Tu trabajo: mejorar la orquestacion de agentes (el motor basico ya esta implementado).
 1. Ve a `services/orchestrator/` — lee el README ahi
-2. El provider te llama en `POST /execute` despues de un `confirm`
-3. Tu devuelves `status`, `result`, `metadata`
-4. No necesitas saber nada de Beckn — solo tu contrato HTTP con el provider
+2. El provider llama `POST /execute` despues de un `confirm` (fire-and-forget)
+3. Puedes consultar estado con `GET /execute/{id}`
+4. Pendientes: persistencia en BD, callbacks push al BPP cuando termina
 
 ### Si eres del equipo de Agentes IA
 Tu trabajo: construir agentes reales (summarizer, code reviewer, etc.)
 1. Ve a `services/agents/` — lee el README ahi
-2. El orchestrator te llama en `POST /run/<agent-id>`
+2. El orchestrator te llama en `POST /task?agent_id=<agent-id>` con el input como body plano
 3. Tu devuelves `result` y `metadata`
 4. No necesitas saber nada de Beckn ni del orchestrator — solo tu contrato HTTP
 5. Para agregar un nuevo agente al catalogo, coordina con el equipo Beckn (`services/bpp/app/catalog_data.py`)

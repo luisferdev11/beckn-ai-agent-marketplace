@@ -13,10 +13,13 @@ Pattern (same as sandbox but with real logic):
     5. ONIX signs it and sends it back to the BAP
 """
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 
 from app.catalog_data import get_agent_by_id, get_offer_by_id, PROVIDER
+from app.config import AGENT_URL_MAP
+from app.handlers import orchestrator_client
 
 logger = logging.getLogger(__name__)
 
@@ -156,12 +159,11 @@ async def handle_init(context: dict, message: dict) -> dict:
 async def handle_confirm(context: dict, message: dict) -> dict:
     """
     Handle confirm: BAP confirms the contract.
-    Returns on_confirm. In a real system this would trigger agent execution.
+    Marks contract ACTIVE and dispatches agent execution to the orchestrator.
     """
     contract = message.get("contract", {})
     txn_id = context["transactionId"]
 
-    # Find and update stored contract
     stored = None
     for c in _contracts.values():
         if c.get("transactionId") == txn_id:
@@ -172,6 +174,7 @@ async def handle_confirm(context: dict, message: dict) -> dict:
         stored["status"] = "ACTIVE"
         stored["confirmed_at"] = _now_iso()
         logger.info(f"confirm: contract {stored['id']} is now ACTIVE")
+        asyncio.create_task(_dispatch_to_orchestrator(stored))
 
     response_contract = {
         "id": contract.get("id", stored["id"] if stored else "unknown"),
@@ -187,10 +190,57 @@ async def handle_confirm(context: dict, message: dict) -> dict:
     }
 
 
+async def _dispatch_to_orchestrator(stored: dict) -> None:
+    """Fire-and-forget: call orchestrator /execute and store execution_id."""
+    contract_id = stored["id"]
+    commitments = stored.get("commitments", [])
+    if not commitments:
+        logger.warning("dispatch: no commitments in contract %s", contract_id)
+        return
+
+    resources = commitments[0].get("resources", [])
+    if not resources:
+        logger.warning("dispatch: no resources in contract %s", contract_id)
+        return
+
+    agent_id = resources[0].get("id", "")
+    agent_url = AGENT_URL_MAP.get(agent_id, "")
+    if not agent_url:
+        logger.error("dispatch: no agent_url for agent_id=%s in contract %s", agent_id, contract_id)
+        return
+
+    agent_input = commitments[0].get("performanceAttributes", {}) or {}
+    sla = {}
+    agent_catalog = get_agent_by_id(agent_id)
+    if agent_catalog:
+        sla = agent_catalog.get("resourceAttributes", {}).get("sla", {})
+
+    timeout_ms = 30000
+    max_latency = sla.get("maxLatency", "PT30S")
+    if max_latency.startswith("PT") and max_latency.endswith("S"):
+        try:
+            timeout_ms = int(float(max_latency[2:-1]) * 1000)
+        except ValueError:
+            pass
+
+    try:
+        ack = await orchestrator_client.start_execution({
+            "contract_id": contract_id,
+            "agent_id": agent_id,
+            "agent_url": agent_url,
+            "input": agent_input,
+            "timeout_ms": timeout_ms,
+        })
+        stored["execution_id"] = ack.get("execution_id")
+        logger.info("dispatch: contract %s → execution %s", contract_id, stored["execution_id"])
+    except Exception as exc:
+        logger.error("dispatch: failed to start execution for contract %s: %s", contract_id, exc)
+
+
 async def handle_status(context: dict, message: dict) -> dict:
     """
     Handle status: BAP asks for execution status.
-    Returns on_status with mock performance results (Iter 0).
+    Polls the orchestrator for real execution state.
     """
     contract = message.get("contract", {})
     txn_id = context["transactionId"]
@@ -201,33 +251,53 @@ async def handle_status(context: dict, message: dict) -> dict:
             stored = c
             break
 
-    # Mock execution result (Iter 0)
-    # Extended schema validation is disabled in ONIX config (extendedSchema_enabled: false)
-    # so ONIX only checks that @context and @type are present (base validation) but does
-    # NOT fetch or validate against the URL. When we host a proper JSON-LD context document,
-    # we can re-enable extended validation.
+    # Determine execution status from orchestrator
+    exec_status = "PENDING"
+    short_desc = "Execution pending"
+    result: dict = {}
+    metadata: dict = {}
+
+    execution_id = stored.get("execution_id") if stored else None
+    if execution_id:
+        try:
+            exec_data = await orchestrator_client.get_execution(execution_id)
+            exec_status = exec_data.get("status", "PENDING")
+            result = exec_data.get("result") or {}
+            metadata = exec_data.get("metadata") or {}
+            error = exec_data.get("error")
+            if exec_status == "COMPLETED":
+                short_desc = result.get("review") or result.get("summary") or str(result)
+            elif exec_status == "FAILED":
+                short_desc = error or "Agent execution failed"
+            else:
+                short_desc = f"Execution {exec_status.lower()}"
+        except Exception as exc:
+            logger.error("status: failed to poll orchestrator for execution %s: %s", execution_id, exc)
+            short_desc = "Could not retrieve execution status"
+
+    # Extended schema validation is disabled in ONIX (extendedSchema_enabled: false) —
+    # ONIX only checks @context and @type are present (base validation).
     schema_url = "https://raw.githubusercontent.com/luisferdev11/beckn-ai-agent-marketplace/main/schemas/ai-agents-v1.json"
     performance = [{
         "id": "perf-001",
-        "status": {"code": "COMPLETED"},
+        "status": {
+            "code": exec_status,
+            "name": exec_status.replace("_", " ").title(),
+            "shortDesc": short_desc[:500] if short_desc else "",
+        },
         "performanceAttributes": {
             "@context": schema_url,
             "@type": "beckn:AgentExecution",
-            "startedAt": stored.get("confirmed_at", _now_iso()) if stored else _now_iso(),
-            "completedAt": _now_iso(),
-            "latencyMs": 3200,
-            "tokensConsumed": 4200,
-            "result": {
-                "summary": "[MOCK] El documento establece tres provisiones regulatorias clave "
-                "relacionadas con el cumplimiento de datos personales, obligaciones de "
-                "reporte trimestral, y clausulas de penalizacion por incumplimiento.",
-                "confidence": 0.94,
-            },
-            "status": "COMPLETED",
+            "startedAt": metadata.get("started_at") or (stored.get("confirmed_at") if stored else _now_iso()),
+            "completedAt": metadata.get("completed_at") or _now_iso(),
+            "latencyMs": metadata.get("latency_ms") or 0,
+            "tokensUsed": metadata.get("tokens_used") or {"input": 0, "output": 0, "total": 0},
+            "model": metadata.get("model") or "unknown",
+            "result": result,
+            "status": exec_status,
         },
     }]
 
-    # Schema requires commitments in every Contract
     commitments = stored.get("commitments", []) if stored else contract.get("commitments", [])
     if not commitments:
         commitments = [{"id": "commitment-001", "status": {"code": "ACTIVE"},

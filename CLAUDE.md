@@ -171,15 +171,17 @@ Usamos credenciales pre-registradas del starter kit:
 - Pricing real (base + 18% GST)
 - Smoke test automatizado (`python scripts/smoke_test.py`)
 - Docker compose con 6 servicios
+- Orchestrator conectado al BPP (fire & forget en confirm, polling en status)
+- `performanceAttributes` en `on_status` con datos reales: latencia, tokens, resultado del agente
+- Schema `ai-agents-v1.json` correctamente mapeado a los modelos del orchestrator
 
 ### Pendiente
 - [ ] Persistencia en BD (in-memory actualmente — se pierde al reiniciar)
 - [ ] BAP dinamico (init/confirm deben usar datos del on_select almacenado)
-- [ ] Hospedar schema JSON-LD para `performanceAttributes`
+- [ ] Hospedar schema JSON-LD en URL publica (`raw.githubusercontent.com`) y re-habilitar `extendedSchema_enabled: true` en `infra/onix/bpp.yaml` BPP Caller
 - [ ] Publish de nuestro catalogo al CDS real
 - [ ] Discovery Service propio
-- [ ] Conectar orchestrator real al provider
-- [ ] Conectar agentes reales al orchestrator
+- [ ] Conectar agentes reales al orchestrator (actualmente reciben requests pero usan LLM real via Groq)
 
 ## Skills de Claude Code
 
