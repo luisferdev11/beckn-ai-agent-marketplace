@@ -185,6 +185,9 @@ Usamos credenciales pre-registradas del starter kit:
 
 ## Skills de Claude Code
 
+### Flujo de trabajo del equipo
+- `/pr` — Empaqueta tus cambios, genera commit message y abre PR contra develop con revisión humana en cada paso
+
 ### Proyecto real
 - `/mp-status` — Estado de los servicios del marketplace
 - `/mp-flow [full|select|smoke]` — Ejecuta flujo Beckn
