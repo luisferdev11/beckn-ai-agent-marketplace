@@ -11,11 +11,23 @@ Sigue los pasos en orden y **espera confirmación del desarrollador antes de ava
 
 Corre `git branch --show-current` y `git status`.
 
-- Si la rama actual es `main` o `develop`: **detente** e indica al desarrollador que debe crear una rama de feature antes de continuar:
+- Si la rama actual es `main` o `develop`, pregunta:
+
+  > "Estás en `<rama>`. ¿Cómo se llama tu feature o fix? (ej: `bap-discovery`, `fix-on-select`)"
+
+  Espera la respuesta. Según el contexto de lo que diga:
+  - Si suena a funcionalidad nueva: crea `feat/<respuesta>`
+  - Si suena a corrección: crea `fix/<respuesta>`
+  - Si no está claro, pregunta: "¿Es una feature nueva o un fix?"
+
+  Luego corre:
+  ```bash
+  git checkout -b <tipo>/<nombre>
   ```
-  git checkout -b feat/<nombre-descriptivo>
-  ```
-- Si hay una rama de feature activa: continúa al Paso 1.
+
+  Confirma al desarrollador en qué rama quedó y continúa al Paso 1.
+
+- Si ya hay una rama de feature o fix activa (`feat/*`, `fix/*`, `db/*`, etc.): continúa al Paso 1 sin preguntar nada.
 
 ## Paso 1 — ¿Qué implementaste? [PAUSA]
 
