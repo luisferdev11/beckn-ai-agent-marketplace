@@ -1,0 +1,126 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* ── Infosys brand palette ── */
+  --infosys-navy:   #003057;
+  --infosys-cobalt: #007CC3;
+  --infosys-cobalt-dark: #005A8E;
+  --infosys-cobalt-light: #E1F0FA;
+
+  /* Hero (dark navy) */
+  --bg-hero: #002244;
+
+  /* Content surfaces (light) */
+  --bg-content:  #F2F5F8;
+  --bg-surface:  #FFFFFF;
+  --bg-elevated: #EEF2F6;
+  --bg-card:     #FFFFFF;
+
+  /* Borders */
+  --border-subtle:  #E2E8F0;
+  --border-default: #C8D5E3;
+  --border-strong:  #A0B4C8;
+
+  /* Text — on light */
+  --text-primary:   #0A1929;
+  --text-secondary: #4A5B6B;
+  --text-tertiary:  #8A9BAC;
+
+  /* Text — on dark hero */
+  --text-on-dark:   #FFFFFF;
+  --text-on-dark-2: rgba(255,255,255,0.72);
+  --text-on-dark-3: rgba(255,255,255,0.42);
+
+  /* Actions */
+  --accent:      #007CC3;
+  --accent-dim:  rgba(0, 124, 195, 0.08);
+  --accent-mid:  rgba(0, 124, 195, 0.18);
+  --accent-send: #007CC3;
+
+  /* Status */
+  --trust-high: #00875A;
+  --trust-mid:  #C96F00;
+  --trust-low:  #C62828;
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg-content);
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::selection {
+    background: var(--accent-mid);
+    color: var(--text-primary);
+  }
+
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: var(--bg-elevated); }
+  ::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 2px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+}
+
+@layer utilities {
+  .font-plex {
+    font-family: var(--font-plex), system-ui, sans-serif;
+  }
+  .font-mono {
+    font-family: var(--font-mono), 'Courier New', monospace;
+  }
+}
+
+/* ── Infosys navy hero gradient ── */
+.hero-gradient {
+  background-color: var(--bg-hero);
+  background-image:
+    radial-gradient(ellipse 75% 55% at 50% 0%,   rgba(0, 124, 195, 0.38) 0%, transparent 68%),
+    radial-gradient(ellipse 50% 70% at 0%   65%,  rgba(0,  60, 120, 0.30) 0%, transparent 65%),
+    radial-gradient(ellipse 50% 55% at 100% 60%,  rgba(0,  90, 160, 0.25) 0%, transparent 65%),
+    linear-gradient(175deg, #001835 0%, #003057 55%, #004882 100%);
+}
+
+/* ── Animations ── */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.agent-card   { animation: fadeInUp 0.35s ease-out both; }
+.results-section { animation: fadeInUp 0.4s ease-out both; }
+
+.skeleton {
+  background: linear-gradient(90deg, var(--bg-elevated) 25%, var(--border-subtle) 50%, var(--bg-elevated) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
