@@ -12,6 +12,7 @@ Pattern (same as sandbox but with real logic):
     4. We build the on_* response and POST it to ONIX-BPP at /bpp/caller/on_{action}
     5. ONIX signs it and sends it back to the BAP
 """
+from __future__ import annotations
 
 import asyncio
 import logging

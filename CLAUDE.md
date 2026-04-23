@@ -190,7 +190,29 @@ Usamos credenciales pre-registradas del starter kit:
 - [ ] Discovery Service propio
 - [ ] Conectar agentes reales al orchestrator (actualmente reciben requests pero usan LLM real via Groq)
 
+## Testing
+
+**El proyecto usa TDD.** Antes de implementar un feature, escribe el test que define su contrato.
+Para features planeados pero no implementados, marca con `pytest.mark.xfail(strict=True)`.
+
+**4 capas de tests:**
+- `services/*/tests/unit/` — funciones puras
+- `services/*/tests/contract/` — conformidad con spec Beckn v2
+- `services/*/tests/integration/` — endpoints HTTP + ONIX mockeado (respx)
+- `tests/e2e/` — stack Docker completo
+
+**Reglas:**
+- Nunca hardcodear payloads Beckn en tests — usar factories (`tests/factories/`)
+- ONIX siempre mockeado excepto en E2E
+- Fixtures autouse `clean_store` / `clean_contracts` ya limpian state entre tests
+- Correr: `make test` (BAP+BPP sin Docker), `make test-e2e` (con Docker)
+
+**Documento completo:** `tests/TESTING.md`
+
 ## Skills de Claude Code
+
+### Flujo de trabajo del equipo
+- `/pr` — Empaqueta tus cambios, genera commit message y abre PR contra develop con revisión humana en cada paso
 
 ### Proyecto real
 - `/mp-status` — Estado de los servicios del marketplace
