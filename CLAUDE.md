@@ -69,10 +69,15 @@ Spec oficial v2: `../protocol-specifications-v2/api/v2.0.0/beckn.yaml` (OpenAPI 
 │                      └──────────────┘                                   │
 │                                                                         │
 │  ┌──────────────┐                                                      │
-│  │  FRONTEND    │  (futuro — React)                                    │
-│  │  Consume API │                                                      │
-│  │  del market- │                                                      │
-│  │  place :3001 │                                                      │
+│  │  FRONTEND    │  React + Next.js  :3000                              │
+│  │  :3000       │  Consume API REST del BAP                            │
+│  │  Consume API │  services/frontend/                                  │
+│  │  del BAP     │                                                      │
+│  └──────┬───────┘                                                      │
+│         │ fetch / SSE                                                  │
+│  ┌──────▼───────┐                                                      │
+│  │BAP-MARKET-   │                                                      │
+│  │ (BAP) :3001  │                                                      │
 │  └──────────────┘                                                      │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -98,7 +103,7 @@ Cada paso: **ACK sincrono + callback on_* asincrono**.
 - **Backend:** Python 3.12 + FastAPI
 - **Modelos compartidos:** Pydantic v2 (`libs/beckn_models/`)
 - **Agentes IA:** Python (LangChain / CrewAI) — equipo separado
-- **Frontend:** React (futuro)
+- **Frontend:** React + Next.js (`services/frontend/`, puerto 3000)
 - **Infra:** Redis, Docker Compose. PostgreSQL en siguiente iteracion.
 
 ## Estructura del proyecto
@@ -106,10 +111,11 @@ Cada paso: **ACK sincrono + callback on_* asincrono**.
 ```
 beckn-ai-agent-marketplace/
 ├── services/                     # Microservicios (cada uno con Dockerfile)
-│   ├── bap/                      # MARKETPLACE — lado comprador (BAP)
-│   ├── bpp/                      # PROVIDER — lado proveedor (BPP)
-│   ├── orchestrator/             # ORCHESTRATOR — ejecuta agentes IA
-│   ├── agents/                   # AGENTS — agentes IA individuales
+│   ├── bap/                      # MARKETPLACE — lado comprador (BAP) :3001
+│   ├── bpp/                      # PROVIDER — lado proveedor (BPP) :3002
+│   ├── orchestrator/             # ORCHESTRATOR — ejecuta agentes IA :3003
+│   ├── agents/                   # AGENTS — agentes IA individuales :3004
+│   ├── frontend/                 # FRONTEND — React + Next.js :3000
 │   └── discovery/                # DISCOVERY SERVICE (futuro)
 ├── libs/
 │   └── beckn_models/             # Modelos Pydantic compartidos
@@ -130,6 +136,7 @@ beckn-ai-agent-marketplace/
 | **Database** | `services/bap/app/db/`, `services/bpp/app/db/`, `libs/` | — | — | Persistencia (SQLite→Postgres), migraciones |
 | **Orchestrator** | `services/orchestrator/` | `orchestrator` | 3003 | Orquestacion de agentes, colas, timeouts |
 | **Agentes IA** | `services/agents/` | `agents` | 3004 | Agentes reales (summarizer, code reviewer, etc.) |
+| **Frontend** | `services/frontend/` | `frontend` | 3000 | UI React + Next.js, consume API del BAP |
 
 ## Convenciones de codigo
 
