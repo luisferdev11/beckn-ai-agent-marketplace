@@ -203,6 +203,32 @@ services:
     networks:
       - beckn_network
 
+  # FRONTEND — React + Next.js
+  # UI del marketplace. Consume la API REST del BAP via rewrites de Next.js.
+  # Todas las llamadas al BAP van a /api/bap/* y Next.js las proxea internamente.
+  #
+  # Equipo: Frontend
+  # Codigo: services/frontend/
+  frontend:
+    build:
+      context: ..
+      dockerfile: services/frontend/Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - BAP_URL=http://bap-marketplace:3001
+    depends_on:
+      bap-marketplace:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - beckn_network
+
 networks:
   beckn_network:
     driver: bridge
