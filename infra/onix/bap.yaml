@@ -34,7 +34,7 @@ modules:
         registry:
           id: dediregistry
           config:
-            url: https://fabric.nfh.global/registry/dedi
+            url: http://mock-network:8090/registry/dedi
             # registryName is a constant for all NFH/Beckn networks
             registryName: subscribers.beckn.one
             timeout: 10
@@ -103,7 +103,7 @@ modules:
         registry:
           id: dediregistry
           config:
-            url: https://fabric.nfh.global/registry/dedi
+            url: http://mock-network:8090/registry/dedi
             # registryName is a constant for all NFH/Beckn networks
             registryName: subscribers.beckn.one
             timeout: 10
