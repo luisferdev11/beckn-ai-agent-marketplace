@@ -25,6 +25,6 @@ routingRules:
     version: "2.0.0"
     targetType: "url"
     target:
-      url: "https://34.14.221.66.sslip.io/beckn"   # Replace with your Discover service endpoint
+      url: "http://onix-bpp:8082/bpp/receiver"   # Local: discover goes directly to our BPP
     endpoints:
       - discover

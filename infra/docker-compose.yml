@@ -37,6 +37,22 @@ services:
   #
   # Servicios base que NO se modifican. Son dependencias externas.
 
+  # MOCK NETWORK — simulates DeDi registry + CDS for local development
+  # Replaces: fabric.nfh.global/registry/dedi and fabric.nfh.global/beckn/catalog
+  mock-network:
+    build:
+      context: ..
+      dockerfile: services/mock-network/Dockerfile
+    ports:
+      - "8090:8090"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - beckn_network
+
   redis:
     image: redis:alpine
     ports:
@@ -75,6 +91,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      mock-network:
+        condition: service_healthy
     networks:
       - beckn_network
 
@@ -90,6 +108,8 @@ services:
       - REDIS_ADDR=redis:6379
     depends_on:
       redis:
+        condition: service_healthy
+      mock-network:
         condition: service_healthy
     networks:
       - beckn_network

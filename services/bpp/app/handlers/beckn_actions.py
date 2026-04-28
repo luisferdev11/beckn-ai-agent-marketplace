@@ -44,6 +44,20 @@ def build_response_context(incoming_context: dict, action: str) -> dict:
     return ctx
 
 
+async def handle_discover(context: dict, message: dict) -> dict:
+    """
+    Handle discover: BAP is looking for available AI agents.
+    Returns on_discover with the full catalog (provider + resources + offers).
+    """
+    from app.catalog_data import get_catalog_for_publish
+    catalog = get_catalog_for_publish()
+    logger.info("discover: returning catalog with %d agents", len(catalog.get("resources", [])))
+    return {
+        "context": build_response_context(context, "discover"),
+        "message": {"catalog": catalog},
+    }
+
+
 async def handle_select(context: dict, message: dict) -> dict:
     """
     Handle select: BAP wants to select an agent.
@@ -353,6 +367,7 @@ async def handle_support(context: dict, message: dict) -> dict:
 
 # Action dispatcher
 ACTION_HANDLERS = {
+    "discover": handle_discover,
     "select": handle_select,
     "init": handle_init,
     "confirm": handle_confirm,

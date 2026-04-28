@@ -116,6 +116,7 @@ beckn-ai-agent-marketplace/
 │   ├── orchestrator/             # ORCHESTRATOR — ejecuta agentes IA :3003
 │   ├── agents/                   # AGENTS — agentes IA individuales :3004
 │   ├── frontend/                 # FRONTEND — React + Next.js :3000
+│   ├── mock-network/             # Mock local de DeDi + CDS (solo dev) :8090
 │   └── discovery/                # DISCOVERY SERVICE (futuro)
 ├── libs/
 │   └── beckn_models/             # Modelos Pydantic compartidos
@@ -167,17 +168,20 @@ ONIX es un proxy que se sienta entre nuestros servicios y la red Beckn:
 Usamos credenciales pre-registradas del starter kit:
 - BAP: `bap.example.com` (llave Ed25519 en `infra/onix/bap.yaml`)
 - BPP: `bpp.example.com` (llave Ed25519 en `infra/onix/bpp.yaml`)
-- Registry: `fabric.nfh.global/registry/dedi` (DeDi, beckn.one/testnet)
-- CDS: `fabric.nfh.global/beckn/catalog` (Catalog Discovery Service)
+- Registry (prod): `fabric.nfh.global/registry/dedi` (DeDi, beckn.one/testnet)
+- CDS (prod): `fabric.nfh.global/beckn/catalog` (Catalog Discovery Service)
+- Registry (dev local): `http://mock-network:8090/registry/dedi` (mock, sin internet)
+- CDS (dev local): `http://mock-network:8090/beckn/catalog` (mock, sin internet)
 
 ## Estado actual (Iter 0 — en progreso)
 
 ### Funcionando
-- Flujo completo select → init → confirm → status con callbacks
+- Flujo completo discover → select → init → confirm → status con callbacks
+- Ambiente local 100% offline: `mock-network` simula DeDi registry y CDS (`services/mock-network/`)
 - Catalogo de 3 agentes IA mock (summarizer, code reviewer, data extractor)
 - Pricing real (base + 18% GST)
 - Smoke test automatizado (`python scripts/smoke_test.py`)
-- Docker compose con 6 servicios
+- Docker compose con 7 servicios (incluye mock-network)
 - Orchestrator conectado al BPP (fire & forget en confirm, polling en status)
 - `performanceAttributes` en `on_status` con datos reales: latencia, tokens, resultado del agente
 - Schema `ai-agents-v1.json` correctamente mapeado a los modelos del orchestrator
@@ -186,8 +190,8 @@ Usamos credenciales pre-registradas del starter kit:
 - [ ] Persistencia en BD (in-memory actualmente — se pierde al reiniciar)
 - [ ] BAP dinamico (init/confirm deben usar datos del on_select almacenado)
 - [ ] Hospedar schema JSON-LD en URL publica (`raw.githubusercontent.com`) y re-habilitar `extendedSchema_enabled: true` en `infra/onix/bpp.yaml` BPP Caller
-- [ ] Publish de nuestro catalogo al CDS real
-- [ ] Discovery Service propio
+- [ ] Publish de nuestro catalogo al CDS real (dev local: ya funciona via mock-network)
+- [ ] Discovery Service propio para produccion (dev local: discover va directo al BPP via mock-network)
 - [ ] Conectar agentes reales al orchestrator (actualmente reciben requests pero usan LLM real via Groq)
 
 ## Testing
