@@ -34,6 +34,7 @@ PROVIDER = {
 }
 
 _AGENTFACTS_CONTEXT = "https://raw.githubusercontent.com/danielctecla/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json"
+_AGENTFACTS_TYPE = "beckn:AIAgentService"
 _PROVIDER_URL = "http://bpp-provider:3002"
 _BPP_ENDPOINT = "http://onix-bpp:8082/bpp/caller"
 
@@ -51,6 +52,7 @@ AGENTS = [
         "availableAt": PROVIDER["availableAt"],
         "resourceAttributes": {
             "@context": _AGENTFACTS_CONTEXT,
+            "@type": _AGENTFACTS_TYPE,
             "id": "beckn-marketplace:summarizer-v1",
             "agent_name": "urn:agent:beckn-marketplace:LegalDocumentSummarizer",
             "label": "Legal Document Summarizer",
@@ -101,6 +103,7 @@ AGENTS = [
         "availableAt": PROVIDER["availableAt"],
         "resourceAttributes": {
             "@context": _AGENTFACTS_CONTEXT,
+            "@type": _AGENTFACTS_TYPE,
             "id": "beckn-marketplace:code-reviewer-v1",
             "agent_name": "urn:agent:beckn-marketplace:CodeReviewAssistant",
             "label": "Code Review Assistant",
@@ -159,6 +162,7 @@ AGENTS = [
         "availableAt": PROVIDER["availableAt"],
         "resourceAttributes": {
             "@context": _AGENTFACTS_CONTEXT,
+            "@type": _AGENTFACTS_TYPE,
             "id": "beckn-marketplace:data-extractor-v1",
             "agent_name": "urn:agent:beckn-marketplace:InvoiceDataExtractor",
             "label": "Invoice Data Extractor",

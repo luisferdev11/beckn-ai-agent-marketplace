@@ -81,6 +81,8 @@ class AgentFacts(BaseModel):
     Used as resource.resourceAttributes in catalog/publish and on_discover.
     """
 
+    context_url: str = Field(default=AGENTFACTS_CONTEXT, alias="@context")
+    type_name: str = Field(default="beckn:AIAgentService", alias="@type")
     id: str
     agent_name: str
     label: str
@@ -98,7 +100,7 @@ class AgentFacts(BaseModel):
     # Not part of AgentFacts spec — kept here because handle_select() reads it
     pricing: Optional[dict] = None
 
-    model_config = {"extra": "allow"}
+    model_config = {"populate_by_name": True, "extra": "allow"}
 
 
 # Backward-compat alias — old name used in some tests
