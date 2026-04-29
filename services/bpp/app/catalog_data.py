@@ -3,12 +3,13 @@ Mock catalog of AI agents for Iter 0.
 
 This hardcoded catalog will be replaced by a database-backed catalog
 in future iterations. For now it provides 3 agents with realistic
-attributes using the beckn:AIAgentService JSON-LD schema.
+attributes using the AgentFacts schema (projnanda/agentfacts-format).
 
 Each agent has:
 - Beckn descriptor (name, description)
-- resourceAttributes with AI-specific fields (capabilities, SLA, pricing)
-- An offer with pricing
+- resourceAttributes following AgentFacts v1 (id, agent_name, skills, sla, ...)
+  plus a non-standard `pricing` field read by handle_select()
+- An offer with validity dates
 """
 from __future__ import annotations
 
@@ -32,6 +33,10 @@ PROVIDER = {
     ],
 }
 
+_AGENTFACTS_CONTEXT = "https://raw.githubusercontent.com/danielctecla/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json"
+_PROVIDER_URL = "http://bpp-provider:3002"
+_BPP_ENDPOINT = "http://onix-bpp:8082/bpp/caller"
+
 AGENTS = [
     {
         "id": "agent-summarizer-001",
@@ -45,15 +50,42 @@ AGENTS = [
         "provider": {"id": PROVIDER["id"], "descriptor": PROVIDER["descriptor"]},
         "availableAt": PROVIDER["availableAt"],
         "resourceAttributes": {
-            "@context": "https://raw.githubusercontent.com/luisferdev11/beckn-ai-agent-marketplace/main/schemas/ai-agents-v1.json",
-            "@type": "beckn:AIAgentService",
-            "capabilities": ["document_summary", "legal_analysis"],
-            "languages": ["en", "hi"],
-            "inputSchema": {"accepts": ["application/pdf", "text/plain"], "maxSize": "50MB"},
-            "outputSchema": {"returns": "application/json"},
+            "@context": _AGENTFACTS_CONTEXT,
+            "id": "beckn-marketplace:summarizer-v1",
+            "agent_name": "urn:agent:beckn-marketplace:LegalDocumentSummarizer",
+            "label": "Legal Document Summarizer",
+            "description": "Summarizes legal and regulatory documents in Hindi and English",
+            "version": "1.0.0",
+            "jurisdiction": "IN",
+            "provider": {"name": PROVIDER["descriptor"]["name"], "url": _PROVIDER_URL},
+            "endpoints": {"static": [_BPP_ENDPOINT]},
+            "capabilities": {
+                "modalities": ["text"],
+                "streaming": False,
+                "batch": False,
+                "authentication": {"methods": ["jwt"]},
+            },
+            "skills": [
+                {
+                    "id": "document_summary",
+                    "description": "Summarizes legal and regulatory documents",
+                    "inputModes": ["text/plain", "application/pdf"],
+                    "outputModes": ["application/json"],
+                    "supportedLanguages": ["en", "hi"],
+                    "latencyBudgetMs": 5000,
+                    "maxTokens": 4096,
+                },
+                {
+                    "id": "legal_analysis",
+                    "description": "Analyzes legal clauses and provisions",
+                    "inputModes": ["text/plain"],
+                    "outputModes": ["application/json"],
+                    "supportedLanguages": ["en", "hi"],
+                    "latencyBudgetMs": 5000,
+                },
+            ],
+            "sla": {"maxLatencyMs": 5000, "accuracy": 0.95, "uptime": 0.995},
             "pricing": {"model": "per_task", "currency": "INR", "unitPrice": 6.00},
-            "sla": {"maxLatency": "PT5S", "accuracy": 0.95, "uptime": 0.995},
-            "dataResidency": "IN",
         },
     },
     {
@@ -68,18 +100,50 @@ AGENTS = [
         "provider": {"id": PROVIDER["id"], "descriptor": PROVIDER["descriptor"]},
         "availableAt": PROVIDER["availableAt"],
         "resourceAttributes": {
-            "@context": "https://raw.githubusercontent.com/luisferdev11/beckn-ai-agent-marketplace/main/schemas/ai-agents-v1.json",
-            "@type": "beckn:AIAgentService",
-            "capabilities": ["code_review", "security_analysis", "best_practices"],
-            "languages": ["en"],
-            "inputSchema": {
-                "accepts": ["text/plain", "application/zip"],
-                "maxSize": "100MB",
+            "@context": _AGENTFACTS_CONTEXT,
+            "id": "beckn-marketplace:code-reviewer-v1",
+            "agent_name": "urn:agent:beckn-marketplace:CodeReviewAssistant",
+            "label": "Code Review Assistant",
+            "description": "Reviews code for bugs, security issues, and best practices",
+            "version": "1.0.0",
+            "jurisdiction": "IN",
+            "provider": {"name": PROVIDER["descriptor"]["name"], "url": _PROVIDER_URL},
+            "endpoints": {"static": [_BPP_ENDPOINT]},
+            "capabilities": {
+                "modalities": ["text"],
+                "streaming": False,
+                "batch": False,
+                "authentication": {"methods": ["jwt"]},
             },
-            "outputSchema": {"returns": "application/json"},
+            "skills": [
+                {
+                    "id": "code_review",
+                    "description": "Reviews code for bugs and quality issues",
+                    "inputModes": ["text/plain", "application/zip"],
+                    "outputModes": ["application/json"],
+                    "supportedLanguages": ["en"],
+                    "latencyBudgetMs": 30000,
+                    "maxTokens": 8192,
+                },
+                {
+                    "id": "security_analysis",
+                    "description": "Detects OWASP Top 10 vulnerabilities",
+                    "inputModes": ["text/plain"],
+                    "outputModes": ["application/json"],
+                    "supportedLanguages": ["en"],
+                    "latencyBudgetMs": 30000,
+                },
+                {
+                    "id": "best_practices",
+                    "description": "Checks adherence to coding standards",
+                    "inputModes": ["text/plain"],
+                    "outputModes": ["application/json"],
+                    "supportedLanguages": ["en"],
+                    "latencyBudgetMs": 30000,
+                },
+            ],
+            "sla": {"maxLatencyMs": 30000, "accuracy": 0.90, "uptime": 0.99},
             "pricing": {"model": "per_task", "currency": "INR", "unitPrice": 10.00},
-            "sla": {"maxLatency": "PT30S", "accuracy": 0.90, "uptime": 0.99},
-            "dataResidency": "IN",
         },
     },
     {
@@ -94,18 +158,50 @@ AGENTS = [
         "provider": {"id": PROVIDER["id"], "descriptor": PROVIDER["descriptor"]},
         "availableAt": PROVIDER["availableAt"],
         "resourceAttributes": {
-            "@context": "https://raw.githubusercontent.com/luisferdev11/beckn-ai-agent-marketplace/main/schemas/ai-agents-v1.json",
-            "@type": "beckn:AIAgentService",
-            "capabilities": ["data_extraction", "ocr", "invoice_processing"],
-            "languages": ["en", "hi", "ta"],
-            "inputSchema": {
-                "accepts": ["image/jpeg", "image/png", "application/pdf"],
-                "maxSize": "20MB",
+            "@context": _AGENTFACTS_CONTEXT,
+            "id": "beckn-marketplace:data-extractor-v1",
+            "agent_name": "urn:agent:beckn-marketplace:InvoiceDataExtractor",
+            "label": "Invoice Data Extractor",
+            "description": "Extracts structured data from invoices and financial documents",
+            "version": "1.0.0",
+            "jurisdiction": "IN",
+            "provider": {"name": PROVIDER["descriptor"]["name"], "url": _PROVIDER_URL},
+            "endpoints": {"static": [_BPP_ENDPOINT]},
+            "capabilities": {
+                "modalities": ["text", "image"],
+                "streaming": False,
+                "batch": True,
+                "authentication": {"methods": ["jwt"]},
             },
-            "outputSchema": {"returns": "application/json"},
+            "skills": [
+                {
+                    "id": "data_extraction",
+                    "description": "Extracts structured fields from financial documents",
+                    "inputModes": ["image/jpeg", "image/png", "application/pdf"],
+                    "outputModes": ["application/json"],
+                    "supportedLanguages": ["en", "hi", "ta"],
+                    "latencyBudgetMs": 10000,
+                    "maxTokens": 4096,
+                },
+                {
+                    "id": "ocr",
+                    "description": "Optical character recognition for scanned documents",
+                    "inputModes": ["image/jpeg", "image/png"],
+                    "outputModes": ["text/plain"],
+                    "supportedLanguages": ["en", "hi", "ta"],
+                    "latencyBudgetMs": 5000,
+                },
+                {
+                    "id": "invoice_processing",
+                    "description": "Parses invoice line items, totals, and vendor details",
+                    "inputModes": ["application/pdf", "image/jpeg", "image/png"],
+                    "outputModes": ["application/json"],
+                    "supportedLanguages": ["en", "hi"],
+                    "latencyBudgetMs": 10000,
+                },
+            ],
+            "sla": {"maxLatencyMs": 10000, "accuracy": 0.92, "uptime": 0.995},
             "pricing": {"model": "per_task", "currency": "INR", "unitPrice": 4.00},
-            "sla": {"maxLatency": "PT10S", "accuracy": 0.92, "uptime": 0.995},
-            "dataResidency": "IN",
         },
     },
 ]

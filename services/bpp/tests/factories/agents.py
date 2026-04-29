@@ -11,9 +11,10 @@ def make_agent(
     name: str = "Test Agent",
     unit_price: float = 5.0,
     capabilities: list = None,
-    max_latency: str = "PT10S",
+    max_latency_ms: int = 10000,
 ) -> dict:
-    schema_url = "https://raw.githubusercontent.com/luisferdev11/beckn-ai-agent-marketplace/main/schemas/ai-agents-v1.json"
+    schema_url = "https://raw.githubusercontent.com/danielctecla/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json"
+    skill_ids = capabilities or ["test_capability"]
     return {
         "id": agent_id,
         "descriptor": {
@@ -23,14 +24,32 @@ def make_agent(
         "provider": {"id": "PROV-TEST-001", "descriptor": {"name": "Test Provider"}},
         "resourceAttributes": {
             "@context": schema_url,
-            "@type": "beckn:AIAgentService",
-            "capabilities": capabilities or ["test_capability"],
-            "languages": ["en"],
-            "inputSchema": {"accepts": ["text/plain"]},
-            "outputSchema": {"returns": "application/json"},
+            "id": f"test:{agent_id}",
+            "agent_name": f"urn:agent:test:{name.replace(' ', '')}",
+            "label": name,
+            "description": f"Test agent: {name}",
+            "version": "1.0.0",
+            "jurisdiction": "IN",
+            "provider": {"name": "Test Provider", "url": "http://bpp-provider:3002"},
+            "endpoints": {"static": ["http://onix-bpp:8082/bpp/caller"]},
+            "capabilities": {
+                "modalities": ["text"],
+                "streaming": False,
+                "batch": False,
+                "authentication": {"methods": ["jwt"]},
+            },
+            "skills": [
+                {
+                    "id": sid,
+                    "description": f"Test skill: {sid}",
+                    "inputModes": ["text/plain"],
+                    "outputModes": ["application/json"],
+                    "latencyBudgetMs": max_latency_ms,
+                }
+                for sid in skill_ids
+            ],
+            "sla": {"maxLatencyMs": max_latency_ms, "accuracy": 0.90, "uptime": 0.99},
             "pricing": {"model": "per_task", "currency": "INR", "unitPrice": unit_price},
-            "sla": {"maxLatency": max_latency, "accuracy": 0.90, "uptime": 0.99},
-            "dataResidency": "IN",
         },
     }
 

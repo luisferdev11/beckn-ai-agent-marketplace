@@ -71,7 +71,9 @@ beckn-ai-agent-marketplace/
 ├── libs/
 │   └── beckn_models/         # Modelos Pydantic compartidos (Beckn v2 + AI agents)
 ├── schemas/
-│   └── ai-agents-v1.json     # JSON-LD schema para agentes IA
+│   ├── agentfacts-v1.json    # AgentFacts schema (NANDA compatible) — describe al agente
+│   ├── execution-result-v1.json  # Schema de resultado de ejecución (on_status)
+│   └── ai-agents-v1.json     # Schema original (mantenido por compatibilidad)
 ├── infra/
 │   ├── docker-compose.yml    # Orquesta todos los servicios
 │   └── onix/                 # Configs ONIX (routing, llaves, plugins)

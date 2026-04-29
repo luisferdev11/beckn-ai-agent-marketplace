@@ -10,7 +10,7 @@ from app.handlers.beckn_actions import handle_select
 from tests.factories.agents import make_beckn_context, make_select_contract_message
 
 
-SCHEMA_URL = "https://raw.githubusercontent.com/luisferdev11/beckn-ai-agent-marketplace/main/schemas/ai-agents-v1.json"
+SCHEMA_URL = "https://raw.githubusercontent.com/danielctecla/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json"
 
 
 class TestPricingByAgent:

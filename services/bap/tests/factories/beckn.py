@@ -100,7 +100,7 @@ def make_on_confirm_callback(txn_id: str, contract_id: str = None) -> dict:
 
 def make_on_status_completed_callback(txn_id: str, contract_id: str = None) -> dict:
     cid = contract_id or f"contract-{txn_id[:8]}"
-    schema_url = "https://raw.githubusercontent.com/luisferdev11/beckn-ai-agent-marketplace/main/schemas/ai-agents-v1.json"
+    schema_url = "https://raw.githubusercontent.com/danielctecla/beckn-ai-agent-marketplace/main/schemas/execution-result-v1.json"
     return {
         "context": make_context("on_status", txn_id=txn_id),
         "message": {

@@ -1,0 +1,260 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beckn-marketplace.example.com/schemas/agentfacts-v1.json",
+  "title": "Beckn AI Marketplace — AgentFacts",
+  "description": "Agent identity and capability declaration. Compatible with projnanda/agentfacts-format.",
+  "version": "1.0.0",
+  "type": "object",
+  "required": ["id", "agent_name", "label", "description", "version", "provider", "endpoints", "capabilities", "skills"],
+  "additionalProperties": false,
+  "properties": {
+
+    "id": {
+      "type": "string",
+      "description": "Unique identifier. Format: 'org:agent-name-vX'",
+      "examples": ["beckn-marketplace:summarizer-v1"]
+    },
+    "agent_name": {
+      "type": "string",
+      "description": "URN identifier",
+      "pattern": "^urn:agent:[a-z0-9-]+:[A-Za-z0-9]+$",
+      "examples": ["urn:agent:beckn-marketplace:DocumentSummarizer"]
+    },
+    "label": {
+      "type": "string",
+      "description": "Human-readable name",
+      "examples": ["Document Summarizer"]
+    },
+    "description": {
+      "type": "string",
+      "description": "What the agent does"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "examples": ["1.0.0"]
+    },
+    "jurisdiction": {
+      "type": "string",
+      "description": "Country/region for compliance. Replaces 'dataResidency' from the old schema.",
+      "examples": ["IN", "US", "EU"]
+    },
+
+    "provider": {
+      "type": "object",
+      "required": ["name", "url"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "url":  { "type": "string", "format": "uri" },
+        "did":  { "type": "string", "description": "Optional DID for verifiable identity. Required to publish on NANDA Index." }
+      }
+    },
+
+    "endpoints": {
+      "type": "object",
+      "required": ["static"],
+      "additionalProperties": false,
+      "properties": {
+        "static": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "format": "uri" },
+          "description": "Direct API endpoints. In our stack: ONIX-BPP URL."
+        },
+        "adaptive_resolver": {
+          "type": "object",
+          "description": "Dynamic routing endpoint. Optional — for future load balancing.",
+          "additionalProperties": false,
+          "properties": {
+            "url":      { "type": "string", "format": "uri" },
+            "policies": {
+              "type": "array",
+              "items": { "type": "string", "enum": ["geo", "load", "threat-shield"] }
+            }
+          }
+        }
+      }
+    },
+
+    "capabilities": {
+      "type": "object",
+      "required": ["modalities", "authentication"],
+      "additionalProperties": false,
+      "properties": {
+        "modalities": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": ["text", "audio", "video", "image", "structured-data"]
+          },
+          "description": "Input/output modalities supported by this agent"
+        },
+        "streaming": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether real-time streaming is supported"
+        },
+        "batch": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether batch processing is supported"
+        },
+        "authentication": {
+          "type": "object",
+          "required": ["methods"],
+          "additionalProperties": false,
+          "properties": {
+            "methods": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Supported auth methods. e.g. ['jwt', 'oauth2']"
+            },
+            "requiredScopes": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Required OAuth scopes if method is oauth2"
+            }
+          }
+        }
+      }
+    },
+
+    "skills": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Discrete tasks this agent can perform",
+      "items": {
+        "type": "object",
+        "required": ["id", "description", "inputModes", "outputModes"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique skill identifier within this agent"
+          },
+          "description": {
+            "type": "string",
+            "description": "What this skill does"
+          },
+          "inputModes": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Accepted input formats. e.g. ['text', 'pdf']"
+          },
+          "outputModes": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Produced output formats. e.g. ['text', 'json']"
+          },
+          "supportedLanguages": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "ISO 639-1 language codes. e.g. ['en', 'es', 'hi']"
+          },
+          "latencyBudgetMs": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Maximum expected latency in milliseconds"
+          },
+          "maxTokens": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Maximum token limit for this skill"
+          }
+        }
+      }
+    },
+
+    "sla": {
+      "type": "object",
+      "description": "Declared SLA. Added by us — not in AgentFacts base. Maps to Beckn v2 contract terms.",
+      "additionalProperties": false,
+      "properties": {
+        "maxLatencyMs": {
+          "type": "integer",
+          "description": "Hard latency ceiling in ms"
+        },
+        "accuracy": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Declared accuracy rate (0.0–1.0)"
+        },
+        "uptime": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Declared uptime rate (0.0–1.0)"
+        }
+      }
+    },
+
+    "evaluations": {
+      "type": "object",
+      "description": "Certified performance data. Populated after real usage data accumulates.",
+      "additionalProperties": false,
+      "properties": {
+        "performanceScore": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 5,
+          "description": "Composite score 0–5"
+        },
+        "availability90d": {
+          "type": "string",
+          "description": "90-day availability percentage. e.g. '99.95%'"
+        },
+        "lastAudited": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "auditTrail": {
+          "type": "string",
+          "description": "Immutable audit evidence. IPFS hash or public URL."
+        },
+        "auditorID": {
+          "type": "string"
+        }
+      }
+    },
+
+    "telemetry": {
+      "type": "object",
+      "description": "Observability configuration",
+      "additionalProperties": false,
+      "properties": {
+        "enabled":   { "type": "boolean" },
+        "retention": { "type": "string", "examples": ["30d", "90d"] },
+        "sampling":  { "type": "number", "minimum": 0, "maximum": 1 },
+        "metrics": {
+          "type": "object",
+          "description": "Real-time performance indicators",
+          "additionalProperties": false,
+          "properties": {
+            "latency_p95_ms": { "type": "number", "minimum": 0 },
+            "throughput_rps": { "type": "number", "minimum": 0 },
+            "error_rate":     { "type": "number", "minimum": 0, "maximum": 1 },
+            "availability":   { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "certification": {
+      "type": "object",
+      "description": "Third-party certification. Optional — for production deployments.",
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "type": "string",
+          "examples": ["verified", "audited", "certified"]
+        },
+        "issuer":         { "type": "string" },
+        "issuanceDate":   { "type": "string", "format": "date-time" },
+        "expirationDate": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

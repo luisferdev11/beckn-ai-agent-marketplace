@@ -1,34 +1,137 @@
 """
 Domain-specific models for AI Agent services on Beckn v2.
 
-These extend the generic Beckn Resource with AI-specific attributes
-using JSON-LD (@context, @type). This schema is local to the project —
-no official Beckn domain schema for AI agents exists yet.
+resourceAttributes in the catalog follow the AgentFacts schema
+(projnanda/agentfacts-format), which is compatible with the NANDA
+agent directory standard. AgentFacts describes WHO the agent is and
+WHAT it can do. Pricing stays as an extra field in resourceAttributes
+(it is Beckn-specific, not part of AgentFacts).
 
-Usage in catalog resourceAttributes:
-    {
-        "@context": "https://schema.beckn.io/ai-agents/v1/",
-        "@type": "beckn:AIAgentService",
-        "capabilities": ["document_summary"],
-        ...
-    }
+Execution results (on_status performanceAttributes) use a separate
+schema defined in schemas/execution-result-v1.json.
 """
 
 from typing import Any, Optional
 from pydantic import BaseModel, Field
 
-JSONLD_CONTEXT = "https://schema.beckn.io/ai-agents/v1/"
-JSONLD_TYPE = "beckn:AIAgentService"
+AGENTFACTS_CONTEXT = "https://raw.githubusercontent.com/danielctecla/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json"
+EXECUTION_RESULT_CONTEXT = "https://raw.githubusercontent.com/danielctecla/beckn-ai-agent-marketplace/main/schemas/execution-result-v1.json"
 
 
-class InputSchema(BaseModel):
-    accepts: list[str] = Field(default_factory=lambda: ["text/plain"])
-    maxSize: Optional[str] = None
+# ---------------------------------------------------------------------------
+# AgentFacts models (catalog resourceAttributes)
+# ---------------------------------------------------------------------------
+
+class AgentFactsSkill(BaseModel):
+    id: str
+    description: str
+    inputModes: list[str]
+    outputModes: list[str]
+    supportedLanguages: Optional[list[str]] = None
+    latencyBudgetMs: Optional[int] = None
+    maxTokens: Optional[int] = None
+
+    model_config = {"extra": "allow"}
 
 
-class OutputSchema(BaseModel):
-    returns: str = "application/json"
+class AgentFactsProvider(BaseModel):
+    name: str
+    url: str
+    did: Optional[str] = None
 
+    model_config = {"extra": "allow"}
+
+
+class AgentFactsAuthentication(BaseModel):
+    methods: list[str]
+    requiredScopes: Optional[list[str]] = None
+
+    model_config = {"extra": "allow"}
+
+
+class AgentFactsCapabilities(BaseModel):
+    modalities: list[str]
+    streaming: bool = False
+    batch: bool = False
+    authentication: AgentFactsAuthentication
+
+    model_config = {"extra": "allow"}
+
+
+class AgentFactsEndpoints(BaseModel):
+    static: list[str]
+    adaptive_resolver: Optional[dict] = None
+
+    model_config = {"extra": "allow"}
+
+
+class AgentFactsSLA(BaseModel):
+    maxLatencyMs: Optional[int] = None
+    accuracy: Optional[float] = None
+    uptime: Optional[float] = None
+
+    model_config = {"extra": "allow"}
+
+
+class AgentFacts(BaseModel):
+    """
+    Agent identity and capability declaration for the Beckn catalog.
+    Compatible with projnanda/agentfacts-format.
+
+    Used as resource.resourceAttributes in catalog/publish and on_discover.
+    """
+
+    id: str
+    agent_name: str
+    label: str
+    description: str
+    version: str
+    jurisdiction: Optional[str] = None
+    provider: AgentFactsProvider
+    endpoints: AgentFactsEndpoints
+    capabilities: AgentFactsCapabilities
+    skills: list[AgentFactsSkill]
+    sla: Optional[AgentFactsSLA] = None
+    evaluations: Optional[dict] = None
+    telemetry: Optional[dict] = None
+    certification: Optional[dict] = None
+    # Not part of AgentFacts spec — kept here because handle_select() reads it
+    pricing: Optional[dict] = None
+
+    model_config = {"extra": "allow"}
+
+
+# Backward-compat alias — old name used in some tests
+AIAgentAttributes = AgentFacts
+
+
+# ---------------------------------------------------------------------------
+# Execution result model (on_status performanceAttributes)
+# ---------------------------------------------------------------------------
+
+class AgentExecutionResult(BaseModel):
+    """
+    Result of an agent execution, returned in on_status performanceAttributes.
+    Schema: schemas/execution-result-v1.json
+    """
+
+    context_url: str = Field(default=EXECUTION_RESULT_CONTEXT, alias="@context")
+    type_name: str = Field(default="beckn:AgentExecution", alias="@type")
+
+    startedAt: Optional[str] = None
+    completedAt: Optional[str] = None
+    latencyMs: Optional[int] = None
+    tokensUsed: Optional[dict[str, Any]] = None
+    model: Optional[str] = None
+    result: Optional[dict[str, Any]] = None
+    status: str = "PENDING"
+
+    model_config = {"populate_by_name": True, "extra": "allow"}
+
+
+# ---------------------------------------------------------------------------
+# Legacy helpers (kept for backward compat — not used in new code)
+# ---------------------------------------------------------------------------
 
 class PricingInfo(BaseModel):
     model: str = "per_task"
@@ -42,55 +145,10 @@ class SLAInfo(BaseModel):
     uptime: Optional[float] = None
 
 
-class CredentialInfo(BaseModel):
-    type: str
-    issuer: str
-    validUntil: Optional[str] = None
+class InputSchema(BaseModel):
+    accepts: list[str] = Field(default_factory=lambda: ["text/plain"])
+    maxSize: Optional[str] = None
 
 
-class ModelInfo(BaseModel):
-    provider: Optional[str] = None
-    version: Optional[str] = None
-
-
-class AIAgentAttributes(BaseModel):
-    """
-    Domain-specific attributes for an AI agent resource.
-
-    This maps to resource.resourceAttributes in the Beckn catalog.
-    Uses JSON-LD @context and @type for semantic interoperability.
-    """
-
-    context_url: str = Field(default=JSONLD_CONTEXT, alias="@context")
-    type_name: str = Field(default=JSONLD_TYPE, alias="@type")
-
-    capabilities: list[str] = Field(default_factory=list)
-    languages: list[str] = Field(default_factory=lambda: ["en"])
-    inputSchema: Optional[InputSchema] = None
-    outputSchema: Optional[OutputSchema] = None
-    pricing: Optional[PricingInfo] = None
-    sla: Optional[SLAInfo] = None
-    dataResidency: Optional[str] = None
-    modelInfo: Optional[ModelInfo] = None
-    credentials: list[CredentialInfo] = Field(default_factory=list)
-
-    model_config = {"populate_by_name": True, "extra": "allow"}
-
-
-class AgentExecutionResult(BaseModel):
-    """
-    Result of an agent execution, returned in on_status performanceAttributes.
-    For Iter 0 this is a mock; real agents will populate this with actual results.
-    """
-
-    context_url: str = Field(default=JSONLD_CONTEXT, alias="@context")
-    type_name: str = Field(default="beckn:AgentExecution", alias="@type")
-
-    startedAt: Optional[str] = None
-    completedAt: Optional[str] = None
-    latencyMs: Optional[int] = None
-    tokensConsumed: Optional[int] = None
-    result: Optional[dict[str, Any]] = None
-    status: str = "PENDING"
-
-    model_config = {"populate_by_name": True, "extra": "allow"}
+class OutputSchema(BaseModel):
+    returns: str = "application/json"
