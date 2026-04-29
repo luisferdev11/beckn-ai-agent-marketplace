@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beckn-marketplace.example.com/schemas/execution-result-v1.json",
+  "title": "Beckn AI Marketplace — Execution Result",
+  "description": "Result of a single agent task execution. Used in on_status performanceAttributes.",
+  "version": "1.0.0",
+  "type": "object",
+  "required": ["status"],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["PENDING", "RUNNING", "COMPLETED", "FAILED"]
+    },
+    "startedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "completedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "latencyMs": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "model": {
+      "type": "string",
+      "description": "LLM model used for this execution. e.g. 'llama3-8b-8192'"
+    },
+    "tokensUsed": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "input":  { "type": "integer", "minimum": 0 },
+        "output": { "type": "integer", "minimum": 0 },
+        "total":  { "type": "integer", "minimum": 0 }
+      }
+    },
+    "result": {
+      "type": "object",
+      "description": "Agent output payload. Structure depends on the skill executed."
+    }
+  }
+}

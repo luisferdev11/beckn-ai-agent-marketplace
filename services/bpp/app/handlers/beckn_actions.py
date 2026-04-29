@@ -230,13 +230,7 @@ async def _dispatch_to_orchestrator(stored: dict) -> None:
     if agent_catalog:
         sla = agent_catalog.get("resourceAttributes", {}).get("sla", {})
 
-    timeout_ms = 30000
-    max_latency = sla.get("maxLatency", "PT30S")
-    if max_latency.startswith("PT") and max_latency.endswith("S"):
-        try:
-            timeout_ms = int(float(max_latency[2:-1]) * 1000)
-        except ValueError:
-            pass
+    timeout_ms = int(sla.get("maxLatencyMs", 30000))
 
     try:
         ack = await orchestrator_client.start_execution({
@@ -292,7 +286,7 @@ async def handle_status(context: dict, message: dict) -> dict:
 
     # Extended schema validation is disabled in ONIX (extendedSchema_enabled: false) —
     # ONIX only checks @context and @type are present (base validation).
-    schema_url = "https://raw.githubusercontent.com/luisferdev11/beckn-ai-agent-marketplace/main/schemas/ai-agents-v1.json"
+    schema_url = "https://raw.githubusercontent.com/danielctecla/beckn-ai-agent-marketplace/main/schemas/execution-result-v1.json"
     performance = [{
         "id": "perf-001",
         "status": {

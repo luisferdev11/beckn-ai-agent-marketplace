@@ -68,9 +68,10 @@ On failure, return `"status": "error"` with an `error` object:
 
 ## Agent catalog
 
-Each agent must define its capabilities using the `beckn:AIAgentService` schema.
-See `libs/beckn_models/ai_agents.py` for the Pydantic model and
-`schemas/ai-agents-v1.json` for the JSON schema.
+Each agent must define its capabilities using the **AgentFacts** schema
+(compatible with NANDA / `projnanda/agentfacts-format`).
+See `libs/beckn_models/ai_agents.py` (`AgentFacts` model) and
+`schemas/agentfacts-v1.json` for the JSON schema definition.
 
 The provider (BPP) publishes this info to the Beckn network.
 Currently hardcoded in `services/bpp/app/catalog_data.py` — coordinate with the Beckn team when adding new agents.

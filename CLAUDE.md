@@ -120,7 +120,7 @@ beckn-ai-agent-marketplace/
 │   └── discovery/                # DISCOVERY SERVICE (futuro)
 ├── libs/
 │   └── beckn_models/             # Modelos Pydantic compartidos
-├── schemas/                      # JSON-LD schemas del dominio AI
+├── schemas/                      # Schemas del dominio AI (AgentFacts + execution result)
 ├── infra/
 │   ├── docker-compose.yml        # Un solo `docker compose up --build`
 │   └── onix/                     # Configs ONIX (routing, llaves, plugins)
@@ -184,7 +184,7 @@ Usamos credenciales pre-registradas del starter kit:
 - Docker compose con 7 servicios (incluye mock-network)
 - Orchestrator conectado al BPP (fire & forget en confirm, polling en status)
 - `performanceAttributes` en `on_status` con datos reales: latencia, tokens, resultado del agente
-- Schema `ai-agents-v1.json` correctamente mapeado a los modelos del orchestrator
+- `resourceAttributes` de los 3 agentes migrado a schema **AgentFacts** (NANDA compatible, `schemas/agentfacts-v1.json`)
 
 ### Pendiente
 - [ ] Persistencia en BD (in-memory actualmente — se pierde al reiniciar)
