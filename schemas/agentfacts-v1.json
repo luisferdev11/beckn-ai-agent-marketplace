@@ -5,9 +5,21 @@
   "description": "Agent identity and capability declaration. Compatible with projnanda/agentfacts-format.",
   "version": "1.0.0",
   "type": "object",
-  "required": ["id", "agent_name", "label", "description", "version", "provider", "endpoints", "capabilities", "skills"],
+  "$comment": "This is OUR local schema, not the official NANDA Index schema. Two separate schemas exist: (1) this file — used by us and by ONIX (when extendedSchema_enabled: true) to validate our catalog agents locally; (2) the NANDA Index schema at spec.projectnanda.org — used by the NANDA server to validate what gets published to nest.projectnanda.org. The @type field is NOT part of projnanda/agentfacts-format. It is kept here for ONIX base validation compatibility (ONIX checks @context and @type are present). When the NANDA adapter is built, it must strip @type before publishing to the NANDA Index, since the official NANDA schema uses additionalProperties: false and would reject unknown fields. @context IS compatible with NANDA v1.2.0 — they require it too.",
+  "required": ["@context", "@type", "id", "agent_name", "label", "description", "version", "provider", "endpoints", "capabilities", "skills"],
   "additionalProperties": false,
   "properties": {
+
+    "@context": {
+      "type": "string",
+      "description": "JSON-LD context URL pointing to this schema. Compatible with NANDA v1.2.0 — required by both our schema and the official NANDA Index schema.",
+      "examples": ["https://raw.githubusercontent.com/danielctecla/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json"]
+    },
+    "@type": {
+      "type": "string",
+      "description": "Resource type for ONIX base validation. NOT part of projnanda/agentfacts-format — added by us. The NANDA adapter must strip this field before publishing to the NANDA Index.",
+      "examples": ["beckn:AIAgentService"]
+    },
 
     "id": {
       "type": "string",

@@ -79,6 +79,16 @@ class AgentFacts(BaseModel):
     Compatible with projnanda/agentfacts-format.
 
     Used as resource.resourceAttributes in catalog/publish and on_discover.
+
+    NOTE — two schemas exist and they are NOT the same:
+      - schemas/agentfacts-v1.json  →  our local schema, used by us and ONIX
+      - NANDA Index schema          →  used by nest.projectnanda.org
+
+    @type is kept here for ONIX base validation (ONIX checks @context + @type
+    are present). It does NOT exist in projnanda/agentfacts-format. When the
+    NANDA adapter is built, it must strip @type before publishing to the NANDA
+    Index, since the official NANDA schema has additionalProperties: false.
+    @context IS compatible with NANDA v1.2.0 — they require it too.
     """
 
     context_url: str = Field(default=AGENTFACTS_CONTEXT, alias="@context")
