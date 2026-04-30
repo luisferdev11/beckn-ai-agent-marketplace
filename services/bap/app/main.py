@@ -1,11 +1,11 @@
 """
 BAP-AI — Beckn Application Platform for the AI Agent Marketplace.
 
-This service replaces the sandbox-bap with two capabilities:
+This service:
 1. PASSIVE: receives on_* callbacks from ONIX-BAP (webhook receiver)
 2. ACTIVE: exposes API for frontend/scripts to originate Beckn transactions
 
-Iter 0: in-memory storage, hardcoded BPP target, no frontend yet.
+PostgreSQL backed — callbacks and transactions persisted.
 """
 
 import logging
@@ -28,8 +28,8 @@ logger = logging.getLogger(SERVICE_NAME)
 
 app = FastAPI(
     title="BAP-AI — Beckn Application Platform",
-    version="0.1.0",
-    description="AI Agent marketplace buyer backend on Beckn v2.0.0",
+    version="0.2.0",
+    description="AI Agent marketplace buyer backend on Beckn v2.0.0 with PostgreSQL",
 )
 
 app.add_middleware(
@@ -56,11 +56,19 @@ async def onix_timeout_handler(request: Request, exc: httpx.TimeoutException):
 @app.get("/health")
 async def health():
     from app.store import get_callbacks_count
-    return {"status": "ok", "service": SERVICE_NAME, "callbacks_recibidos": get_callbacks_count()}
+    count = await get_callbacks_count()
+    return {"status": "ok", "service": SERVICE_NAME, "callbacks_recibidos": count}
 
 
 @app.on_event("startup")
 async def startup():
-    logger.info(f"{SERVICE_NAME} started on port {PORT}")
-    logger.info(f"Webhook receiver at /api/bap-webhook/{{action}}")
-    logger.info(f"API endpoints at /api/contracts/{{select,init,confirm,status}}")
+    from beckn_models.db import get_pool
+    await get_pool()
+    logger.info(f"{SERVICE_NAME} started on port {PORT} — PostgreSQL connected")
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    from beckn_models.db import close_pool
+    await close_pool()
+    logger.info("PostgreSQL pool closed")
