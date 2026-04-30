@@ -65,6 +65,26 @@ services:
     networks:
       - beckn_network
 
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5434:5432"
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - ./db/migrations:/docker-entrypoint-initdb.d/migrations
+      - ./db/init.sh:/docker-entrypoint-initdb.d/init.sh
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - beckn_network
+
   # ─── ONIX Adapters (Beckn protocol middleware) ────────────────────
   #
   # ONIX es un binario Go precompilado que actua como proxy entre
@@ -132,6 +152,14 @@ services:
       - PORT=3001
       - BAP_CALLER_URL=http://onix-bap:8081/bap/caller
       - SERVICE_NAME=bap-marketplace
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${POSTGRES_DB}
+      - DB_USER=${POSTGRES_USER}
+      - DB_PASSWORD=${POSTGRES_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
       interval: 10s
@@ -161,8 +189,15 @@ services:
       - ORCHESTRATOR_URL=http://orchestrator:3003
       - SERVICE_NAME=bpp-provider
       - AGENT_URL_MAP={"agent-summarizer-001":"http://agents:3004","agent-code-reviewer-001":"http://agents:3004","agent-data-extractor-001":"http://agents:3004"}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${POSTGRES_DB}
+      - DB_USER=${POSTGRES_USER}
+      - DB_PASSWORD=${POSTGRES_PASSWORD}
     depends_on:
       orchestrator:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
@@ -248,6 +283,9 @@ services:
       retries: 5
     networks:
       - beckn_network
+
+volumes:
+  pgdata:
 
 networks:
   beckn_network:

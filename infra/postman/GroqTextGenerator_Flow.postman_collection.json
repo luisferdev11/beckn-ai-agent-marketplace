@@ -1,0 +1,525 @@
+{
+  "info": {
+    "name": "Groq Text Generator — Full Beckn Flow",
+    "description": "Flujo completo para ejecutar el agente Groq Text Generator a través del protocolo Beckn v2.\n\nPRE-REQUISITOS:\n1. Docker Compose levantado (cd infra && docker compose up --build -d)\n2. Haber registrado: categoría, provider y agente via la colección MarketplaceBPP\n   - Si no lo has hecho, corre primero la carpeta '0 — Setup' de esta colección\n\nFLUJO:\n  0. Setup (categoria + provider + agente) — solo la primera vez\n  1. SELECT → guarda transactionId automáticamente\n  2. INIT → usa transactionId del select\n  3. CONFIRM → usa transactionId + aquí va tu PROMPT en longDesc\n  4. STATUS → obtiene resultado del LLM\n  5. Ver resultado → lee el último callback con la respuesta de Groq\n\nENTRE CADA PASO esperar ~3 segundos para que el callback async llegue.\n\nNOTA: El confirm se manda directo a ONIX (puerto 8081) porque necesitamos\nmandar el payload Beckn completo con el prompt dentro del contract.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_postman_id": "a45d35fc-2c0c-48da-8fad-049443aa0718"
+  },
+  "item": [
+    {
+      "name": "0 — Setup (solo la primera vez)",
+      "description": "Registra categoría, provider y agente. Solo necesitas correr esto UNA VEZ.\nDespués puedes repetir el flujo 1-5 cuantas veces quieras.",
+      "item": [
+        {
+          "name": "0.1 create category",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Category created', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.collectionVariables.set('category_id', json.category_id);",
+                  "    console.log('✔ category_id = ' + json.category_id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"TEXT-GENERATION\",\n  \"display_name\": { \"en\": \"Text Generation\", \"es\": \"Generación de Texto\" },\n  \"description\": \"AI-powered text generation and question answering\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{bpp_url}}/api/categories",
+              "host": [
+                "{{bpp_url}}"
+              ],
+              "path": [
+                "api",
+                "categories"
+              ]
+            }
+          },
+          "_postman_id": "8baf0aff-e42f-4db5-9f0c-f436f8f63678",
+          "response": []
+        },
+        {
+          "name": "0.2 create provider",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Provider created', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.collectionVariables.set('provider_id', json.provider.id);",
+                  "    console.log('✔ provider_id = ' + json.provider.id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subscriber_id\": \"groq-llm-provider.beckn\",\n  \"bpp_uri\": \"http://agents:3004\",\n  \"public_key\": \"ed25519_groq_provider_key\",\n  \"organization_details\": {\n    \"name\": \"Groq LLM Provider\",\n    \"contact_email\": \"admin@groq-provider.com\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{bpp_url}}/api/providers",
+              "host": [
+                "{{bpp_url}}"
+              ],
+              "path": [
+                "api",
+                "providers"
+              ]
+            },
+            "description": "NOTA: subscriber_id, bpp_uri y public_key están MOCKEADOS.\nEn producción estos vendrían del registro real del provider en la red Beckn (DeDi registry)."
+          },
+          "_postman_id": "c17202d0-60c4-44ae-b897-7374f0478175",
+          "response": []
+        },
+        {
+          "name": "0.3 create agent",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Agent created', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.collectionVariables.set('agent_id', String(json.agent_id));",
+                  "    console.log('✔ agent_id = ' + json.agent_id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"provider_id\": {{provider_id}},\n  \"category_id\": {{category_id}},\n  \"agent_name\": { \"en\": \"Groq Text Generator\" },\n  \"description\": \"General-purpose text generation agent powered by Groq LLM (Llama 3.3 70B). Answers questions, generates text, summarizes, translates.\",\n  \"access_point_url\": \"http://agents:3004\",\n  \"interaction_type\": \"sync\",\n  \"version\": \"1.0.0\",\n  \"capabilities\": [\"text-generation\", \"question-answering\", \"summarization\", \"translation\"],\n  \"skills\": [{\n    \"id\": \"text_generation\",\n    \"description\": \"Generate text based on a prompt\",\n    \"inputModes\": [\"text/plain\"],\n    \"outputModes\": [\"text/plain\", \"application/json\"],\n    \"supportedLanguages\": [\"en\", \"es\", \"fr\", \"de\", \"pt\"],\n    \"latencyBudgetMs\": 15000,\n    \"maxTokens\": 8192\n  }],\n  \"input_schema\": { \"type\": \"object\", \"properties\": { \"prompt\": { \"type\": \"string\" } }, \"required\": [\"prompt\"] },\n  \"output_schema\": { \"type\": \"object\", \"properties\": { \"text\": { \"type\": \"string\" } } },\n  \"pricing_model\": { \"type\": \"per_request\", \"value\": 0.01, \"currency\": \"USD\" },\n  \"sla\": { \"maxLatencyMs\": 15000, \"accuracy\": 0.90, \"uptime\": 0.99 },\n  \"jurisdiction\": \"US\",\n  \"modalities\": [\"text\"],\n  \"authentication\": { \"methods\": [\"jwt\"] }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{bpp_url}}/api/agents",
+              "host": [
+                "{{bpp_url}}"
+              ],
+              "path": [
+                "api",
+                "agents"
+              ]
+            },
+            "description": "Usa provider_id y category_id de los pasos anteriores (auto-guardados).\n\nMOCKEADO:\n- access_point_url: apunta al servicio Docker interno. En producción sería la URL pública del provider.\n- authentication: hardcodeado como JWT. En producción el provider definiría sus métodos reales.\n- pricing_model: precio fijo $0.01 USD. En producción vendría del provider.\n- public_key del provider: placeholder. En producción sería la llave Ed25519 real."
+          },
+          "_postman_id": "69ab8b69-079c-4258-af15-26b679016ca2",
+          "response": []
+        }
+      ],
+      "_postman_id": "986fadfb-e6d8-4989-92dd-03f314a4529c"
+    },
+    {
+      "name": "1 — SELECT",
+      "description": "Selecciona el agente Groq Text Generator para iniciar una transacción Beckn.\n\nEste paso:\n- Crea un transactionId nuevo (auto-generado)\n- Manda select a ONIX-BAP → ONIX-BPP → BPP\n- El BPP calcula pricing y responde con on_select (async)\n- El transactionId se guarda automáticamente para los siguientes pasos\n\nESPERAR ~3 segundos después de correr esto antes de pasar a init.",
+      "item": [
+        {
+          "name": "select agent",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Select ACK', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.transactionId).to.be.a('string');",
+                  "    pm.collectionVariables.set('transaction_id', json.transactionId);",
+                  "    pm.collectionVariables.set('contract_id', 'contract-' + json.transactionId.substring(0, 8));",
+                  "    console.log('✔ transaction_id = ' + json.transactionId);",
+                  "    console.log('✔ contract_id = contract-' + json.transactionId.substring(0, 8));",
+                  "    console.log('');",
+                  "    console.log('SIGUIENTE: esperar ~3s y correr INIT');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"agent_id\": \"{{agent_id}}\",\n  \"offer_id\": \"offer-agent-{{agent_id}}\",\n  \"quantity\": 1,\n  \"buyer_name\": \"{{buyer_name}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{bap_url}}/api/contracts/select",
+              "host": [
+                "{{bap_url}}"
+              ],
+              "path": [
+                "api",
+                "contracts",
+                "select"
+              ]
+            },
+            "description": "Valores que usa:\n- agent_id → viene del paso 0.3 (auto-guardado)\n- offer_id → se genera como 'offer-agent-{agent_id}'\n- buyer_name → variable de la colección\n\nValores que genera:\n- transaction_id → auto-guardado, se usa en INIT, CONFIRM y STATUS\n- contract_id → auto-guardado, se usa en CONFIRM\n\nMOCKEADO:\n- buyer_name: hardcodeado. En producción vendría del usuario autenticado.\n- offer_id: construido con convención. En producción vendría del on_discover."
+          },
+          "_postman_id": "e61d973b-f1f2-4ba9-8f3a-0d9c173aecb8",
+          "response": []
+        }
+      ],
+      "_postman_id": "8d6d44ac-4e27-42ee-905e-601e83696da9"
+    },
+    {
+      "name": "2 — INIT",
+      "description": "Inicializa la transacción. Envía datos de fulfillment y settlement.\n\nEste paso:\n- Usa el transaction_id del SELECT (auto-guardado)\n- Lee los commitments almacenados del on_select callback\n- Agrega performance y settlements al contrato\n- El BPP responde con on_init (async)\n\nESPERAR ~3 segundos después de correr esto antes de pasar a confirm.",
+      "item": [
+        {
+          "name": "init transaction",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Init ACK', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.transactionId).to.eql(pm.collectionVariables.get('transaction_id'));",
+                  "    console.log('✔ init enviado para txn=' + json.transactionId.substring(0, 8));",
+                  "    console.log('');",
+                  "    console.log('SIGUIENTE: esperar ~3s y correr CONFIRM');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{transaction_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{bap_url}}/api/contracts/init",
+              "host": [
+                "{{bap_url}}"
+              ],
+              "path": [
+                "api",
+                "contracts",
+                "init"
+              ]
+            },
+            "description": "Valores que usa:\n- transaction_id → viene del SELECT (auto-guardado)\n\nMOCKEADO:\n- performance: se manda un placeholder [{id: 'perf-001'}]. En producción contendría datos reales de fulfillment.\n- settlements: se manda como DRAFT. En producción incluiría datos bancarios / payment gateway del comprador.\n- Los commitments y consideration se leen automáticamente del on_select almacenado en PostgreSQL."
+          },
+          "_postman_id": "5edbd8bf-24e7-412a-9b4d-206374e48b6c",
+          "response": []
+        }
+      ],
+      "_postman_id": "76e58921-cda5-455c-8485-04cb9c7655d1"
+    },
+    {
+      "name": "3 — CONFIRM (aquí va el prompt)",
+      "description": "Confirma el contrato y EJECUTA el agente con tu prompt.\n\n⚠️  ESTE PASO SE MANDA DIRECTO A ONIX (puerto 8081), no al BAP API.\nEsto es porque necesitamos mandar el payload Beckn completo con el prompt\ndentro del descriptor del resource.\n\n🔑 EL PROMPT VA EN: message.contract.commitments[0].resources[0].descriptor.longDesc\n\nCambia el valor de 'longDesc' por tu pregunta antes de enviar.\n\nEste paso:\n- Manda confirm con el prompt al BPP via ONIX\n- El BPP marca el contrato como ACTIVE\n- El BPP dispara ejecución al Orchestrator (fire & forget)\n- El Orchestrator llama a POST http://agents:3004/task?agent_id={agent_id}\n- El agente llama a Groq API (Llama 3.3 70B) con tu prompt\n- El resultado queda almacenado en el Orchestrator\n\nESPERAR ~10 segundos para que el LLM responda antes de pedir STATUS.",
+      "item": [
+        {
+          "name": "confirm + execute (EDITA longDesc con tu prompt)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Auto-generar messageId y timestamp",
+                  "pm.collectionVariables.set('message_id', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.set('timestamp', new Date().toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Confirm ACK', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.message.ack.status).to.eql('ACK');",
+                  "    console.log('✔ confirm enviado — el agente está ejecutándose');",
+                  "    console.log('');",
+                  "    console.log('SIGUIENTE: esperar ~10s y correr STATUS');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"context\": {\n    \"networkId\": \"beckn.one/testnet\",\n    \"action\": \"confirm\",\n    \"version\": \"2.0.0\",\n    \"bapId\": \"bap.example.com\",\n    \"bapUri\": \"http://onix-bap:8081/bap/receiver\",\n    \"bppId\": \"bpp.example.com\",\n    \"bppUri\": \"http://onix-bpp:8082/bpp/receiver\",\n    \"transactionId\": \"{{transaction_id}}\",\n    \"messageId\": \"{{message_id}}\",\n    \"timestamp\": \"{{timestamp}}\",\n    \"ttl\": \"PT30S\"\n  },\n  \"message\": {\n    \"contract\": {\n      \"id\": \"{{contract_id}}\",\n      \"commitments\": [\n        {\n          \"id\": \"commitment-001\",\n          \"status\": { \"descriptor\": { \"code\": \"DRAFT\" } },\n          \"resources\": [\n            {\n              \"id\": \"{{agent_id}}\",\n              \"descriptor\": {\n                \"name\": \"Groq Text Generator\",\n                \"code\": \"TEXT-GENERATION\",\n                \"longDesc\": \"Describeme quien fue Roberto Bolaño y quienes son los detectives salvajes\"\n              },\n              \"quantity\": { \"unitQuantity\": 1, \"unitCode\": \"EXECUTION\" }\n            }\n          ],\n          \"offer\": {\n            \"id\": \"offer-agent-{{agent_id}}\",\n            \"resourceIds\": [\"{{agent_id}}\"]\n          }\n        }\n      ],\n      \"participants\": [\n        {\n          \"id\": \"participant-buyer-001\",\n          \"descriptor\": { \"name\": \"{{buyer_name}}\", \"code\": \"buyer\" }\n        }\n      ],\n      \"performance\": [{ \"id\": \"perf-001\" }],\n      \"settlements\": [{ \"id\": \"settlement-001\", \"status\": \"COMPLETE\" }]\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{onix_bap_url}}/confirm",
+              "host": [
+                "{{onix_bap_url}}"
+              ],
+              "path": [
+                "confirm"
+              ]
+            },
+            "description": "═══════════════════════════════════════════════════════\n  🔑 TU PROMPT VA EN: longDesc (línea 21 del body)\n  Cambia el texto entre comillas por lo que quieras preguntar.\n═══════════════════════════════════════════════════════\n\nValores que usa (todos auto-guardados de pasos anteriores):\n- transaction_id → del SELECT\n- contract_id → del SELECT (contract-{txn_prefix})\n- agent_id → del setup 0.3\n- message_id → auto-generado en pre-request script\n- timestamp → auto-generado en pre-request script\n\nMOCKEADO / HARDCODEADO:\n- context.bapId / bppId: credenciales de testnet (bap.example.com / bpp.example.com)\n  → En producción: identidades reales registradas en DeDi registry\n- context.bapUri / bppUri: URLs internas de Docker\n  → En producción: URLs públicas de los ONIX adapters\n- context.networkId: 'beckn.one/testnet'\n  → En producción: el network ID real de la red Beckn\n- participants: buyer hardcodeado como 'participant-buyer-001'\n  → En producción: vendría del sistema de autenticación (JWT/OAuth)\n- settlements.status: 'COMPLETE' (pago simulado)\n  → En producción: integración con payment gateway real\n- performance: placeholder vacío\n  → En producción: el orchestrator llenaría esto con datos de ejecución reales\n- commitment-001, offer-agent-X: IDs generados por convención\n  → En producción: vendrían del on_select callback real\n\nFLUJO INTERNO después del confirm:\n  ONIX-BAP → firma → ONIX-BPP → verifica → BPP webhook\n  → BPP extrae prompt de longDesc\n  → BPP llama POST orchestrator:3003/execute\n  → Orchestrator llama POST agents:3004/task?agent_id=5\n  → Agent service llama Groq API con tu prompt\n  → Resultado queda en Orchestrator esperando STATUS"
+          },
+          "_postman_id": "867ed609-08b9-4268-8e99-215c6c959cef",
+          "response": []
+        }
+      ],
+      "_postman_id": "e034ca98-1b30-488c-9c91-c1761664cdde"
+    },
+    {
+      "name": "4 — STATUS + resultado",
+      "description": "Pide el status de la ejecución y lee la respuesta del LLM.\n\nCorrer STATUS primero, esperar ~3s, y luego ver el resultado en 'last callback'.",
+      "item": [
+        {
+          "name": "status (trigger on_status)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status ACK', function () {",
+                  "    const json = pm.response.json();",
+                  "    console.log('✔ status solicitado — txn=' + json.transactionId.substring(0, 8));",
+                  "    console.log('');",
+                  "    console.log('SIGUIENTE: esperar ~3s y correr \"ver resultado del LLM\"');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{transaction_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{bap_url}}/api/contracts/status",
+              "host": [
+                "{{bap_url}}"
+              ],
+              "path": [
+                "api",
+                "contracts",
+                "status"
+              ]
+            },
+            "description": "Valores que usa:\n- transaction_id → del SELECT (auto-guardado)\n\nFlujo interno:\n  BAP → ONIX-BAP → ONIX-BPP → BPP\n  → BPP hace GET orchestrator:3003/execute/{execution_id}\n  → Orchestrator devuelve resultado + metadata (tokens, latencia, modelo)\n  → BPP construye on_status con performanceAttributes\n  → on_status viaja de vuelta al BAP via ONIX\n  → BAP almacena en PostgreSQL tabla 'callbacks'"
+          },
+          "_postman_id": "ec0e33f5-a6d8-44f5-b646-73ddd7feffd9",
+          "response": []
+        },
+        {
+          "name": "ver resultado del LLM (último callback)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "const msg = typeof json.message === 'string' ? JSON.parse(json.message) : json.message;",
+                  "",
+                  "if (msg && msg.contract && msg.contract.performance) {",
+                  "    const perf = msg.contract.performance[0] || {};",
+                  "    const attrs = perf.performanceAttributes || {};",
+                  "    const status = (perf.status || {}).code || '?';",
+                  "    const tokens = attrs.tokensUsed || {};",
+                  "    const result = attrs.result || {};",
+                  "    const text = result.text || result.review || JSON.stringify(result);",
+                  "",
+                  "    console.log('═══════════════════════════════════════');",
+                  "    console.log('  Status:  ' + status);",
+                  "    console.log('  Model:   ' + (attrs.model || '?'));",
+                  "    console.log('  Latency: ' + (attrs.latencyMs || '?') + 'ms');",
+                  "    console.log('  Tokens:  in=' + (tokens.input||0) + ' out=' + (tokens.output||0) + ' total=' + (tokens.total||0));",
+                  "    console.log('═══════════════════════════════════════');",
+                  "    console.log('');",
+                  "    console.log(text.substring(0, 2000));",
+                  "",
+                  "    pm.test('LLM execution completed', function () {",
+                  "        pm.expect(status).to.eql('COMPLETED');",
+                  "    });",
+                  "} else {",
+                  "    console.log('Callback aún no tiene resultado. Espera unos segundos y vuelve a correr STATUS + este request.');",
+                  "    console.log('Action: ' + (json.action || '?'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bap_url}}/api/callbacks/ultimo",
+              "host": [
+                "{{bap_url}}"
+              ],
+              "path": [
+                "api",
+                "callbacks",
+                "ultimo"
+              ]
+            },
+            "description": "Lee el último callback recibido por el BAP.\nSi el status es COMPLETED, el campo result.text contiene la respuesta de Groq.\n\nLa respuesta del LLM viaja:\n  Groq API → Agent Service → Orchestrator → BPP (on_status) → ONIX-BPP → ONIX-BAP → BAP webhook → PostgreSQL\n\nSi ves 'on_confirm' en vez de 'on_status', el status aún no llegó. Espera y corre STATUS de nuevo."
+          },
+          "_postman_id": "0f641e2f-b400-4675-8f9c-7259e95e4321",
+          "response": []
+        }
+      ],
+      "_postman_id": "a71e539b-582e-4957-88a7-d7b9a436a0f3"
+    }
+  ],
+  "variable": [
+    {
+      "key": "bap_url",
+      "value": "http://localhost:3001",
+      "description": "BAP API"
+    },
+    {
+      "key": "bpp_url",
+      "value": "http://localhost:3002",
+      "description": "BPP API"
+    },
+    {
+      "key": "onix_bap_url",
+      "value": "http://localhost:8081/bap/caller",
+      "description": "ONIX-BAP caller (para confirm directo)"
+    },
+    {
+      "key": "buyer_name",
+      "value": "Barucroj",
+      "description": "Nombre del comprador"
+    },
+    {
+      "key": "category_id",
+      "value": "",
+      "description": "Auto-guardado del paso 0.1"
+    },
+    {
+      "key": "provider_id",
+      "value": "",
+      "description": "Auto-guardado del paso 0.2"
+    },
+    {
+      "key": "agent_id",
+      "value": "",
+      "description": "Auto-guardado del paso 0.3"
+    },
+    {
+      "key": "transaction_id",
+      "value": "",
+      "description": "Auto-guardado del SELECT"
+    },
+    {
+      "key": "contract_id",
+      "value": "",
+      "description": "Auto-guardado del SELECT"
+    },
+    {
+      "key": "message_id",
+      "value": "",
+      "description": "Auto-generado en pre-request del CONFIRM"
+    },
+    {
+      "key": "timestamp",
+      "value": "",
+      "description": "Auto-generado en pre-request del CONFIRM"
+    }
+  ]
+}

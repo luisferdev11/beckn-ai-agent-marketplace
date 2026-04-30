@@ -9,6 +9,7 @@ description = "Shared Pydantic models for Beckn v2.0.0 AI Agent Marketplace"
 requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.0",
+    "asyncpg>=0.29.0",
 ]
 
 [tool.setuptools.packages.find]

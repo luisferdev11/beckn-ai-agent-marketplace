@@ -1,0 +1,479 @@
+{
+  "info": {
+    "name": "AI Marketplace — BAP (Discover → Select → Init → Confirm)",
+    "description": "BAP-side: full transaction flow for the AI Agent Marketplace.\n\nRun [BPP] setup FIRST (category → provider → agent → publish), then run these in order.\n\nAgent IDs are now SERIAL integers from the database.\nSet bap_api_url = http://localhost:3001 and bap_adapter_url = http://localhost:8081/bap/caller before running.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1 — Discovery",
+      "item": [
+        {
+          "name": "discover (all agents)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('ACK received', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.transactionId).to.be.a('string');",
+                  "    pm.collectionVariables.set('transaction_id', json.transactionId);",
+                  "    console.log('Transaction ID saved: ' + json.transactionId);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{bap_api_url}}/api/contracts/discover",
+              "host": ["{{bap_api_url}}"],
+              "path": ["api", "contracts", "discover"]
+            },
+            "description": "Discover ALL available AI agents. No filters — returns entire catalog.\n\nThe on_discover callback arrives async to the BAP webhook."
+          },
+          "response": []
+        },
+        {
+          "name": "discover (by keyword)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('ACK received', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.transactionId).to.be.a('string');",
+                  "    console.log('Discover by keyword — txn: ' + json.transactionId);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"summarization\",\n  \"capabilities\": [\"legal-analysis\"]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{bap_api_url}}/api/contracts/discover",
+              "host": ["{{bap_api_url}}"],
+              "path": ["api", "contracts", "discover"]
+            },
+            "description": "Discover agents by keywords. Searches capabilities, skills, agent_name, and description in PostgreSQL.\n\nYou can combine 'query' (free text), 'capabilities' (array), and 'category' (string)."
+          },
+          "response": []
+        },
+        {
+          "name": "discover (via ONIX directly)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('ACK received', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.message.ack.status).to.eql('ACK');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"context\": {\n    \"networkId\": \"beckn.one/testnet\",\n    \"action\": \"discover\",\n    \"version\": \"2.0.0\",\n    \"bapId\": \"{{bap_id}}\",\n    \"bapUri\": \"{{bap_uri}}\",\n    \"bppId\": \"{{bpp_id}}\",\n    \"bppUri\": \"{{bpp_uri}}\",\n    \"transactionId\": \"{{$guid}}\",\n    \"messageId\": \"{{$guid}}\",\n    \"timestamp\": \"{{$isoTimestamp}}\",\n    \"ttl\": \"PT30S\",\n    \"schemaContext\": [\"summarization\"]\n  },\n  \"message\": {\n    \"intent\": {\n      \"filters\": {\n        \"type\": \"jsonpath\",\n        \"expression\": \"$.catalogs[*].resources[*]\"\n      }\n    }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{bap_adapter_url}}/discover",
+              "host": ["{{bap_adapter_url}}"],
+              "path": ["discover"]
+            },
+            "description": "Send discover directly to ONIX-BAP (raw Beckn payload).\n\nKeywords go in context.schemaContext array — the BPP extracts them for DB search."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "2 — Transaction",
+      "item": [
+        {
+          "name": "select",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Transaction started', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.transactionId).to.be.a('string');",
+                  "    pm.collectionVariables.set('transaction_id', json.transactionId);",
+                  "    console.log('Select sent — txn: ' + json.transactionId);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"agent_id\": \"{{agent_id}}\",\n  \"offer_id\": \"offer-agent-{{agent_id}}\",\n  \"quantity\": 1,\n  \"buyer_name\": \"{{buyer_name}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{bap_api_url}}/api/contracts/select",
+              "host": ["{{bap_api_url}}"],
+              "path": ["api", "contracts", "select"]
+            },
+            "description": "Select an agent by its integer ID. Creates a new transaction.\n\nThe on_select callback arrives async with pricing (consideration)."
+          },
+          "response": []
+        },
+        {
+          "name": "select (via ONIX directly)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('ACK', function () {",
+                  "    pm.expect(pm.response.json().message.ack.status).to.eql('ACK');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"context\": {\n    \"networkId\": \"beckn.one/testnet\",\n    \"action\": \"select\",\n    \"version\": \"2.0.0\",\n    \"bapId\": \"{{bap_id}}\",\n    \"bapUri\": \"{{bap_uri}}\",\n    \"bppId\": \"{{bpp_id}}\",\n    \"bppUri\": \"{{bpp_uri}}\",\n    \"transactionId\": \"{{transaction_id}}\",\n    \"messageId\": \"{{$guid}}\",\n    \"timestamp\": \"{{$isoTimestamp}}\",\n    \"ttl\": \"PT30S\",\n    \"schemaContext\": []\n  },\n  \"message\": {\n    \"contract\": {\n      \"id\": \"draft-contract-0001\",\n      \"participants\": [\n        {\n          \"id\": \"participant-buyer-001\",\n          \"descriptor\": { \"name\": \"{{buyer_name}}\", \"code\": \"buyer\" }\n        }\n      ],\n      \"commitments\": [\n        {\n          \"id\": \"commitment-001\",\n          \"descriptor\": { \"name\": \"DocSummarizer Pro\", \"code\": \"AI-SUMMARIZATION\" },\n          \"status\": { \"code\": \"DRAFT\" },\n          \"resources\": [\n            {\n              \"id\": \"{{agent_id}}\",\n              \"descriptor\": { \"name\": \"DocSummarizer Pro\", \"code\": \"AI-SUMMARIZATION\" },\n              \"quantity\": { \"unitQuantity\": 1, \"unitCode\": \"EXECUTION\" }\n            }\n          ],\n          \"offer\": {\n            \"id\": \"offer-agent-{{agent_id}}\",\n            \"resourceIds\": [\"{{agent_id}}\"]\n          }\n        }\n      ]\n    }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{bap_adapter_url}}/select",
+              "host": ["{{bap_adapter_url}}"],
+              "path": ["select"]
+            },
+            "description": "Send select directly to ONIX-BAP (raw Beckn payload). Use agent integer ID."
+          },
+          "response": []
+        },
+        {
+          "name": "init",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "console.log('Init sent — txn: ' + pm.response.json().transactionId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{transaction_id}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{bap_api_url}}/api/contracts/init",
+              "host": ["{{bap_api_url}}"],
+              "path": ["api", "contracts", "init"]
+            },
+            "description": "Initialize transaction. Uses stored contract data from on_select callback.\n\nWait ~2s after select before running this."
+          },
+          "response": []
+        },
+        {
+          "name": "confirm",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "console.log('Confirm sent — txn: ' + pm.response.json().transactionId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{transaction_id}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{bap_api_url}}/api/contracts/confirm",
+              "host": ["{{bap_api_url}}"],
+              "path": ["api", "contracts", "confirm"]
+            },
+            "description": "Confirm and execute the agent. BPP marks contract ACTIVE and dispatches to orchestrator.\n\nWait ~2s after init before running this."
+          },
+          "response": []
+        },
+        {
+          "name": "status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "console.log('Status sent — txn: ' + pm.response.json().transactionId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{transaction_id}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{bap_api_url}}/api/contracts/status",
+              "host": ["{{bap_api_url}}"],
+              "path": ["api", "contracts", "status"]
+            },
+            "description": "Check execution status. BPP polls orchestrator and returns result in on_status callback.\n\nWait ~5s after confirm before running this."
+          },
+          "response": []
+        },
+        {
+          "name": "cancel",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "console.log('Cancel sent — txn: ' + pm.response.json().transactionId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{transaction_id}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{bap_api_url}}/api/contracts/cancel",
+              "host": ["{{bap_api_url}}"],
+              "path": ["api", "contracts", "cancel"]
+            },
+            "description": "Cancel an active transaction."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "3 — Query (BAP state)",
+      "item": [
+        {
+          "name": "health check",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Service ok', function () {",
+                  "    pm.expect(pm.response.json().status).to.eql('ok');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bap_api_url}}/health",
+              "host": ["{{bap_api_url}}"],
+              "path": ["health"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "list callbacks",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "const cbs = pm.response.json();",
+                  "console.log('Total callbacks: ' + cbs.length);",
+                  "cbs.slice(0,5).forEach(c => console.log('  ' + c.action + ' | txn=' + c.transaction_id.substring(0,8)));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bap_api_url}}/api/callbacks",
+              "host": ["{{bap_api_url}}"],
+              "path": ["api", "callbacks"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "callbacks count",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bap_api_url}}/api/callbacks/count",
+              "host": ["{{bap_api_url}}"],
+              "path": ["api", "callbacks", "count"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "last callback",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "const cb = pm.response.json();",
+                  "if (cb.action) { console.log('Last: ' + cb.action + ' | txn=' + cb.transaction_id.substring(0,8)); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bap_api_url}}/api/callbacks/ultimo",
+              "host": ["{{bap_api_url}}"],
+              "path": ["api", "callbacks", "ultimo"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "list transactions",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "const txns = pm.response.json();",
+                  "console.log('Total transactions: ' + txns.length);",
+                  "txns.forEach(t => console.log('  id=' + t.id + ' | ' + t.status + ' | txn=' + t.transaction_id.substring(0,8)));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bap_api_url}}/api/transactions",
+              "host": ["{{bap_api_url}}"],
+              "path": ["api", "transactions"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "get transaction by id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "const t = pm.response.json();",
+                  "if (t.callbacks) { console.log('Callbacks: ' + t.callbacks.length); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bap_api_url}}/api/transactions/{{transaction_id}}",
+              "host": ["{{bap_api_url}}"],
+              "path": ["api", "transactions", "{{transaction_id}}"]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    { "key": "bap_api_url", "value": "http://localhost:3001", "description": "BAP API base URL" },
+    { "key": "bap_adapter_url", "value": "http://localhost:8081/bap/caller", "description": "ONIX-BAP caller endpoint (for raw Beckn payloads)" },
+    { "key": "bap_id", "value": "bap.example.com", "description": "BAP Beckn ID" },
+    { "key": "bap_uri", "value": "http://onix-bap:8081/bap/receiver", "description": "BAP receiver URI" },
+    { "key": "bpp_id", "value": "bpp.example.com", "description": "BPP Beckn ID" },
+    { "key": "bpp_uri", "value": "http://onix-bpp:8082/bpp/receiver", "description": "BPP receiver URI" },
+    { "key": "transaction_id", "value": "", "description": "Auto-filled after select" },
+    { "key": "agent_id", "value": "1", "description": "Agent integer ID from database" },
+    { "key": "buyer_name", "value": "Marketplace User", "description": "Buyer display name" }
+  ]
+}
