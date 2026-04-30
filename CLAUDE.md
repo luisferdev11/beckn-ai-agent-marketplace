@@ -22,7 +22,7 @@ Spec oficial v2: `../protocol-specifications-v2/api/v2.0.0/beckn.yaml` (OpenAPI 
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                              RED BECKN                                   │
+│                              RED BECKN                                  │
 │                                                                         │
 │   DeDi Registry (fabric.nfh.global)    CDS (fabric.nfh.global)          │
 │   - Identidades + llaves publicas      - Catalog Service (publish)      │
@@ -51,7 +51,7 @@ Spec oficial v2: `../protocol-specifications-v2/api/v2.0.0/beckn.yaml` (OpenAPI 
 │  │ callbacks,   │    │ Maneja con-  │                                   │
 │  │ expone API   │    │ tratos, dele-│                                   │
 │  │ al frontend  │    │ ga ejecucion │                                   │
-│  └──────────────┘    └──────┬───────┘                                  │
+│  └──────────────┘    └──────┬───────┘                                  `│
 │                             │                                           │
 │                      ┌──────▼───────┐                                   │
 │                      │ORCHESTRATOR  │                                   │
@@ -68,17 +68,17 @@ Spec oficial v2: `../protocol-specifications-v2/api/v2.0.0/beckn.yaml` (OpenAPI 
 │                      │  reales      │                                   │
 │                      └──────────────┘                                   │
 │                                                                         │
-│  ┌──────────────┐                                                      │
-│  │  FRONTEND    │  React + Next.js  :3000                              │
-│  │  :3000       │  Consume API REST del BAP                            │
-│  │  Consume API │  services/frontend/                                  │
-│  │  del BAP     │                                                      │
-│  └──────┬───────┘                                                      │
-│         │ fetch / SSE                                                  │
-│  ┌──────▼───────┐                                                      │
-│  │BAP-MARKET-   │                                                      │
-│  │ (BAP) :3001  │                                                      │
-│  └──────────────┘                                                      │
+│  ┌──────────────┐                                                       │
+│  │  FRONTEND    │  React + Next.js  :3000                               │
+│  │  :3000       │  Consume API REST del BAP                             │
+│  │  Consume API │  services/frontend/                                   │
+│  │  del BAP     │                                                       │
+│  └──────┬───────┘                                                       │
+│         │ fetch / SSE                                                   │
+│  ┌──────▼───────┐                                                       │
+│  │BAP-MARKET-   │                                                       │
+│  │ (BAP) :3001  │                                                       │
+│  └──────────────┘                                                       │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
