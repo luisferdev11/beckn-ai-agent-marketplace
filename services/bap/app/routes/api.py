@@ -63,7 +63,10 @@ async def _send_to_onix(action: str, payload: dict) -> dict:
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.post(url, json=payload)
             logger.info(f"→ {action} sent to {url} — HTTP {response.status_code}")
-            return response.json()
+            try:
+                return response.json()
+            except Exception:
+                return {"message": {"ack": {"status": "ACK"}}, "raw": response.text}
     except (httpx.ConnectError, httpx.TimeoutException) as e:
         logger.error(f"ONIX unreachable for {action}: {e}")
         raise httpx.ConnectError(str(e)) from e
@@ -121,7 +124,7 @@ class TxnRequest(BaseModel):
 async def init(req: TxnRequest):
     """Continue transaction: provide fulfillment details.
     Uses stored contract data from on_select callback."""
-    contract = get_transaction_contract(req.transaction_id)
+    contract = await get_transaction_contract(req.transaction_id)
     ctx = _build_context("init", req.transaction_id)
 
     # Use commitments and participants from on_select if available
@@ -171,7 +174,7 @@ async def init(req: TxnRequest):
 async def confirm(req: TxnRequest):
     """Confirm the transaction: trigger agent execution.
     Uses stored contract data from on_select/on_init callbacks."""
-    contract = get_transaction_contract(req.transaction_id)
+    contract = await get_transaction_contract(req.transaction_id)
     ctx = _build_context("confirm", req.transaction_id)
 
     contract_id = contract.get("id", f"contract-{req.transaction_id[:8]}")
@@ -228,7 +231,7 @@ async def confirm(req: TxnRequest):
 @router.post("/contracts/status")
 async def status(req: TxnRequest):
     """Check execution status. Uses stored commitments."""
-    contract = get_transaction_contract(req.transaction_id)
+    contract = await get_transaction_contract(req.transaction_id)
     ctx = _build_context("status", req.transaction_id)
 
     commitments = contract.get("commitments", [])
@@ -276,13 +279,25 @@ async def discover(req: DiscoverRequest):
     txn_id = req.transaction_id or str(uuid.uuid4())
     ctx = _build_context("discover", txn_id)
 
-    intent: dict = {}
+    # Build keywords list from all search inputs
+    keywords = []
     if req.query:
-        intent["descriptor"] = {"name": req.query}
+        keywords.extend(req.query.split())
     if req.category:
-        intent["category"] = {"descriptor": {"code": req.category}}
+        keywords.append(req.category)
     if req.capabilities:
-        intent["tags"] = [{"code": "capabilities", "list": req.capabilities}]
+        keywords.extend(req.capabilities)
+
+    # Beckn v2 discover: use standard jsonpath and pass keywords in schemaContext
+    # The BPP handler extracts keywords from context.schemaContext for DB search
+    intent: dict = {
+        "filters": {
+            "type": "jsonpath",
+            "expression": "$.catalogs[*].resources[*]",
+        }
+    }
+    if keywords:
+        ctx["schemaContext"] = keywords
 
     payload = {
         "context": ctx,
@@ -296,7 +311,7 @@ async def discover(req: DiscoverRequest):
 @router.post("/contracts/cancel")
 async def cancel(req: TxnRequest):
     """Cancel an active transaction."""
-    contract = get_transaction_contract(req.transaction_id)
+    contract = await get_transaction_contract(req.transaction_id)
     ctx = _build_context("cancel", req.transaction_id)
 
     commitments = contract.get("commitments", [])
@@ -324,26 +339,26 @@ async def cancel(req: TxnRequest):
 
 @router.get("/callbacks")
 async def list_callbacks():
-    return get_all_callbacks()
+    return await get_all_callbacks()
 
 
 @router.get("/callbacks/count")
 async def callbacks_count():
-    return {"callbacks_recibidos": get_callbacks_count(), "status": "ok"}
+    return {"callbacks_recibidos": await get_callbacks_count(), "status": "ok"}
 
 
 @router.get("/callbacks/ultimo")
 async def last_callback():
-    cb = get_last_callback()
+    cb = await get_last_callback()
     return cb if cb else {"error": "no callbacks yet"}
 
 
 @router.get("/transactions")
 async def list_transactions():
-    return get_all_transactions()
+    return await get_all_transactions()
 
 
 @router.get("/transactions/{txn_id}")
 async def get_transaction_detail(txn_id: str):
-    txn = get_transaction(txn_id)
+    txn = await get_transaction(txn_id)
     return txn if txn else {"error": "transaction not found"}

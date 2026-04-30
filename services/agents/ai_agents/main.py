@@ -10,6 +10,9 @@ from ai_agents.code_review import (
     get_metrics as get_code_review_metrics,
     run_task as run_code_review,
 )
+from ai_agents.text_generation import (
+    run_task as run_text_generation,
+)
 
 app = FastAPI(
     title="AI Agents Service",
@@ -47,20 +50,18 @@ _HANDLERS = {
     "agent-code-reviewer-001": run_code_review,
     "agent-summarizer-001": run_code_review,
     "agent-data-extractor-001": run_code_review,
+    "text-generator": run_text_generation,
 }
+
+# Fallback: any unknown agent_id uses text generation
+_DEFAULT_HANDLER = run_text_generation
 
 
 @app.post("/task", response_model=TaskResponse, response_model_exclude_none=True)
 async def execute_task(body: dict, agent_id: str = ""):
     start_time = time.time()
 
-    handler = _HANDLERS.get(agent_id)
-    if handler is None:
-        return TaskResponse(
-            status="error",
-            error=ErrorModel(code="UNKNOWN_AGENT", message=f"No handler for agent_id={agent_id}"),
-            usage=UsageModel(model_used="", latency_ms=int((time.time() - start_time) * 1000)),
-        )
+    handler = _HANDLERS.get(agent_id, _DEFAULT_HANDLER)
 
     try:
         result, usage = await handler(body)

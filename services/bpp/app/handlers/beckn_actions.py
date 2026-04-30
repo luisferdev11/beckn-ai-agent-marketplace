@@ -1,99 +1,138 @@
 """
-Beckn action handlers for the BPP.
+Beckn action handlers for the BPP — PostgreSQL backed.
 
 Each handler corresponds to a Beckn action (select, init, confirm, status, etc.).
 The handler receives the parsed request, processes it with business logic,
 and returns the response payload that will be sent as the on_* callback.
-
-Pattern (same as sandbox but with real logic):
-    1. ONIX-BPP receives a signed request from the BAP
-    2. ONIX validates signature + schema, forwards to us at /api/webhook/{action}
-    3. We return ACK synchronously
-    4. We build the on_* response and POST it to ONIX-BPP at /bpp/caller/on_{action}
-    5. ONIX signs it and sends it back to the BAP
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
 
-from app.catalog_data import get_agent_by_id, get_offer_by_id, PROVIDER
 from app.config import AGENT_URL_MAP
+from app.db import repository as repo
 from app.handlers import orchestrator_client
+from app.routes.provider_api import _agent_to_beckn_resource
 
 logger = logging.getLogger(__name__)
 
-# In-memory contract store (Iter 0 — will migrate to SQLite/Postgres)
-_contracts: dict[str, dict] = {}
-
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + \
-           f"{datetime.now(timezone.utc).microsecond // 1000:03d}Z"
+    dt = datetime.now(timezone.utc)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
 
 
 def build_response_context(incoming_context: dict, action: str) -> dict:
-    """
-    Build the on_* callback context from the incoming context.
-    Same pattern as the sandbox: copy everything, change action and timestamp.
-    """
     ctx = {**incoming_context}
     ctx["action"] = f"on_{action}"
     ctx["timestamp"] = _now_iso()
     return ctx
 
 
+def _parse_jsonb(val):
+    """Safely parse a JSONB value that might be a string or already a dict/list."""
+    if isinstance(val, str):
+        return json.loads(val)
+    return val
+
+
 async def handle_discover(context: dict, message: dict) -> dict:
     """
-    Handle discover: BAP is looking for available AI agents.
-    Returns on_discover with the full catalog (provider + resources + offers).
+    Handle discover: search agents by keywords from the intent.
+    Searches capabilities, skills, agent_name, and description.
     """
-    from app.catalog_data import get_catalog_for_publish
-    catalog = get_catalog_for_publish()
-    logger.info("discover: returning catalog with %d agents", len(catalog.get("resources", [])))
+    intent = message.get("intent", {})
+    keywords = []
+
+    # Keywords passed via context.schemaContext by our BAP
+    schema_context = context.get("schemaContext", [])
+    if isinstance(schema_context, list):
+        keywords.extend([k for k in schema_context if isinstance(k, str)])
+
+    if keywords:
+        agents = await repo.search_agents(keywords)
+    else:
+        agents = await repo.list_agents()
+        agents = [a for a in agents if a["status"] == "active"]
+
+    resources = [_agent_to_beckn_resource(a) for a in agents]
+
+    if agents:
+        provider_org = agents[0].get("provider_org", {})
+        if isinstance(provider_org, str):
+            provider_org = json.loads(provider_org)
+        provider_block = {
+            "id": str(agents[0]["provider_id"]),
+            "descriptor": {"name": provider_org.get("name", "Provider")},
+        }
+    else:
+        provider_block = {"id": "none", "descriptor": {"name": "No providers"}}
+
+    catalog = {
+        "id": "catalog-discover-results",
+        "descriptor": {
+            "name": "AI Agent Catalog",
+            "shortDesc": f"Found {len(resources)} agents",
+        },
+        "provider": provider_block,
+        "resources": resources,
+        "offers": [
+            {
+                "id": f"offer-agent-{a['id']}",
+                "descriptor": {
+                    "name": (json.loads(a['agent_name']) if isinstance(a['agent_name'], str) else a['agent_name']).get('en', 'Agent'),
+                },
+                "resourceIds": [str(a["id"])],
+            }
+            for a in agents
+        ],
+    }
+
+    logger.info("discover: returning %d agents (keywords: %s)", len(resources), keywords)
     return {
         "context": build_response_context(context, "discover"),
-        "message": {"catalog": catalog},
+        "message": {"catalogs": [catalog]},
     }
 
 
 async def handle_select(context: dict, message: dict) -> dict:
-    """
-    Handle select: BAP wants to select an agent.
-    Returns on_select with consideration (pricing).
-    """
+    """Handle select: BAP wants to select an agent. Returns pricing."""
     contract = message.get("contract", {})
-    contract_id = contract.get("id", f"contract-{context['transactionId'][:8]}")
-
-    # Extract what the BAP wants
+    txn_id = context["transactionId"]
+    contract_code = contract.get("id", f"contract-{txn_id[:8]}")
     commitments = contract.get("commitments", [])
     participants = contract.get("participants", [])
 
-    # Build consideration (pricing) based on the requested resources
     considerations = []
     for commitment in commitments:
         resources = commitment.get("resources", [])
-        offer_ref = commitment.get("offer", {})
-        offer = get_offer_by_id(offer_ref.get("id", ""))
-
         total_price = 0.0
         breakup = []
+
         for res in resources:
-            agent = get_agent_by_id(res.get("id", ""))
+            agent_id_str = res.get("id", "")
+            try:
+                agent_id_int = int(agent_id_str)
+                agent = await repo.get_agent_by_id(agent_id_int)
+            except (ValueError, TypeError):
+                agent = None
+
             qty = res.get("quantity", {}).get("unitQuantity", 1)
             if agent:
-                attrs = agent.get("resourceAttributes", {})
-                pricing = attrs.get("pricing", {})
-                unit_price = pricing.get("unitPrice", 0)
-                line_total = unit_price * qty
+                pricing = _parse_jsonb(agent.get("pricing_model", {}))
+                unit_price = pricing.get("value", pricing.get("unitPrice", 0))
+                line_total = float(unit_price) * qty
                 total_price += line_total
+                name = _parse_jsonb(agent.get("agent_name", {}))
+                label = name.get("en", "Agent") if isinstance(name, dict) else str(name)
                 breakup.append({
-                    "title": f"{agent['descriptor']['name']} x{qty}",
-                    "price": {"currency": "INR", "value": f"{line_total:.2f}"},
+                    "title": f"{label} x{qty}",
+                    "price": {"currency": pricing.get("currency", "INR"), "value": f"{line_total:.2f}"},
                 })
 
-        # Add taxes (18% GST)
         tax = total_price * 0.18
         breakup.append({"title": "GST (18%)", "price": {"currency": "INR", "value": f"{tax:.2f}"}})
 
@@ -104,24 +143,25 @@ async def handle_select(context: dict, message: dict) -> dict:
             "breakup": breakup,
         })
 
-    # Store contract state
-    _contracts[contract_id] = {
-        "id": contract_id,
-        "status": "DRAFT",
-        "transactionId": context["transactionId"],
-        "participants": participants,
-        "commitments": commitments,
-        "consideration": considerations,
-        "created_at": _now_iso(),
-    }
+    await repo.create_contract(
+        contract_code=contract_code,
+        transaction_id=txn_id,
+        commitments=commitments,
+        consideration=considerations,
+        participants=participants,
+        status="DRAFT",
+        bap_id=context.get("bapId"),
+        bpp_id=context.get("bppId"),
+        total_amount=sum(float(c["price"]["value"]) for c in considerations) if considerations else None,
+    )
 
-    logger.info(f"select: contract {contract_id} created with {len(commitments)} commitments")
+    logger.info(f"select: contract {contract_code} created with {len(commitments)} commitments")
 
     return {
         "context": build_response_context(context, "select"),
         "message": {
             "contract": {
-                "id": contract_id,
+                "id": contract_code,
                 "participants": participants,
                 "commitments": commitments,
                 "consideration": considerations,
@@ -131,39 +171,37 @@ async def handle_select(context: dict, message: dict) -> dict:
 
 
 async def handle_init(context: dict, message: dict) -> dict:
-    """
-    Handle init: BAP provides fulfillment and settlement details.
-    Returns on_init confirming the terms (still DRAFT).
-    """
+    """Handle init: BAP provides fulfillment and settlement details."""
     contract = message.get("contract", {})
     txn_id = context["transactionId"]
 
-    # Find existing contract by transaction
-    stored = None
-    for c in _contracts.values():
-        if c.get("transactionId") == txn_id:
-            stored = c
-            break
+    stored = await repo.get_contract_by_txn(txn_id)
 
-    # Merge incoming data with stored contract
     performance = contract.get("performance", [{"id": "perf-001"}])
     settlements = contract.get("settlements", [{"id": "settlement-001", "status": "DRAFT"}])
 
     if stored:
-        stored["performance"] = performance
-        stored["settlements"] = settlements
-        logger.info(f"init: contract {stored['id']} updated with performance/settlements")
+        await repo.update_contract(txn_id,
+            performance=performance,
+            settlements=settlements,
+            initialized_at=datetime.now(timezone.utc),
+        )
+        logger.info(f"init: contract updated with performance/settlements [txn={txn_id[:8]}]")
+
+    stored_commitments = _parse_jsonb(stored["commitments"]) if stored else []
+    stored_participants = _parse_jsonb(stored["participants"]) if stored else []
+    stored_consideration = _parse_jsonb(stored["consideration"]) if stored else []
 
     response_contract = {
-        "commitments": contract.get("commitments", stored.get("commitments", []) if stored else []),
-        "participants": contract.get("participants", stored.get("participants", []) if stored else []),
+        "commitments": contract.get("commitments", stored_commitments),
+        "participants": contract.get("participants", stored_participants),
         "performance": performance,
         "settlements": settlements,
     }
 
     if stored:
-        response_contract["id"] = stored["id"]
-        response_contract["consideration"] = stored.get("consideration", [])
+        response_contract["id"] = stored["contract_code"]
+        response_contract["consideration"] = stored_consideration
 
     return {
         "context": build_response_context(context, "init"),
@@ -172,30 +210,32 @@ async def handle_init(context: dict, message: dict) -> dict:
 
 
 async def handle_confirm(context: dict, message: dict) -> dict:
-    """
-    Handle confirm: BAP confirms the contract.
-    Marks contract ACTIVE and dispatches agent execution to the orchestrator.
-    """
+    """Handle confirm: BAP confirms. Mark ACTIVE and dispatch to orchestrator."""
     contract = message.get("contract", {})
     txn_id = context["transactionId"]
 
-    stored = None
-    for c in _contracts.values():
-        if c.get("transactionId") == txn_id:
-            stored = c
-            break
+    stored = await repo.get_contract_by_txn(txn_id)
 
+    # Update contract with confirm data (commitments may contain the prompt)
+    confirm_commitments = contract.get("commitments", [])
     if stored:
-        stored["status"] = "ACTIVE"
-        stored["confirmed_at"] = _now_iso()
-        logger.info(f"confirm: contract {stored['id']} is now ACTIVE")
-        asyncio.create_task(_dispatch_to_orchestrator(stored))
+        updates = {
+            "status": "ACTIVE",
+            "confirmed_at": datetime.now(timezone.utc),
+        }
+        if confirm_commitments:
+            updates["commitments"] = confirm_commitments
+        await repo.update_contract(txn_id, **updates)
+        # Re-read stored to get updated commitments
+        stored = await repo.get_contract_by_txn(txn_id)
+        logger.info(f"confirm: contract ACTIVE [txn={txn_id[:8]}]")
+        asyncio.create_task(_dispatch_to_orchestrator(txn_id, stored))
 
     response_contract = {
-        "id": contract.get("id", stored["id"] if stored else "unknown"),
+        "id": contract.get("id", stored["contract_code"] if stored else "unknown"),
         "commitments": contract.get("commitments", []),
         "participants": contract.get("participants", []),
-        "performance": contract.get("performance", stored.get("performance", []) if stored else []),
+        "performance": contract.get("performance", _parse_jsonb(stored["performance"]) if stored else []),
         "settlements": contract.get("settlements", []),
     }
 
@@ -205,62 +245,64 @@ async def handle_confirm(context: dict, message: dict) -> dict:
     }
 
 
-async def _dispatch_to_orchestrator(stored: dict) -> None:
+async def _dispatch_to_orchestrator(txn_id: str, stored: dict) -> None:
     """Fire-and-forget: call orchestrator /execute and store execution_id."""
-    contract_id = stored["id"]
-    commitments = stored.get("commitments", [])
+    commitments = _parse_jsonb(stored.get("commitments", []))
     if not commitments:
-        logger.warning("dispatch: no commitments in contract %s", contract_id)
         return
 
     resources = commitments[0].get("resources", [])
     if not resources:
-        logger.warning("dispatch: no resources in contract %s", contract_id)
         return
 
-    agent_id = resources[0].get("id", "")
-    agent_url = AGENT_URL_MAP.get(agent_id, "")
-    if not agent_url:
-        logger.error("dispatch: no agent_url for agent_id=%s in contract %s", agent_id, contract_id)
-        return
+    agent_id_str = resources[0].get("id", "")
 
+    # Try to resolve agent URL from DB or fallback to config
+    agent_url = AGENT_URL_MAP.get(agent_id_str, "http://agents:3004")
+
+    # Extract prompt from multiple possible locations in the commitment
     agent_input = commitments[0].get("performanceAttributes", {}) or {}
+    # Also check resource descriptor longDesc (used for text prompts)
+    resources = commitments[0].get("resources", [])
+    if resources and not agent_input:
+        desc = resources[0].get("descriptor", {})
+        prompt_text = desc.get("longDesc", "") or desc.get("shortDesc", "")
+        if prompt_text:
+            agent_input = {"prompt": prompt_text}
     sla = {}
-    agent_catalog = get_agent_by_id(agent_id)
-    if agent_catalog:
-        sla = agent_catalog.get("resourceAttributes", {}).get("sla", {})
+    try:
+        agent_id_int = int(agent_id_str)
+        agent = await repo.get_agent_by_id(agent_id_int)
+        if agent:
+            sla = _parse_jsonb(agent.get("sla", {}))
+            agent_url = agent.get("access_point_url") or agent_url
+    except (ValueError, TypeError):
+        pass
 
     timeout_ms = int(sla.get("maxLatencyMs", 30000))
 
     try:
         ack = await orchestrator_client.start_execution({
-            "contract_id": contract_id,
-            "agent_id": agent_id,
+            "contract_id": stored["contract_code"],
+            "agent_id": agent_id_str,
             "agent_url": agent_url,
             "input": agent_input,
             "timeout_ms": timeout_ms,
         })
-        stored["execution_id"] = ack.get("execution_id")
-        logger.info("dispatch: contract %s → execution %s", contract_id, stored["execution_id"])
+        execution_id = ack.get("execution_id")
+        await repo.update_contract(txn_id, execution_id=execution_id)
+        logger.info("dispatch: txn %s → execution %s", txn_id[:8], execution_id)
     except Exception as exc:
-        logger.error("dispatch: failed to start execution for contract %s: %s", contract_id, exc)
+        logger.error("dispatch: failed for txn %s: %s", txn_id[:8], exc)
 
 
 async def handle_status(context: dict, message: dict) -> dict:
-    """
-    Handle status: BAP asks for execution status.
-    Polls the orchestrator for real execution state.
-    """
+    """Handle status: polls orchestrator for execution state."""
     contract = message.get("contract", {})
     txn_id = context["transactionId"]
 
-    stored = None
-    for c in _contracts.values():
-        if c.get("transactionId") == txn_id:
-            stored = c
-            break
+    stored = await repo.get_contract_by_txn(txn_id)
 
-    # Determine execution status from orchestrator
     exec_status = "PENDING"
     short_desc = "Execution pending"
     result: dict = {}
@@ -276,16 +318,19 @@ async def handle_status(context: dict, message: dict) -> dict:
             error = exec_data.get("error")
             if exec_status == "COMPLETED":
                 short_desc = result.get("review") or result.get("summary") or str(result)
+                await repo.update_contract(txn_id,
+                    status="COMPLETED",
+                    completed_at=datetime.now(timezone.utc),
+                )
             elif exec_status == "FAILED":
                 short_desc = error or "Agent execution failed"
+                await repo.update_contract(txn_id, status="FAILED")
             else:
                 short_desc = f"Execution {exec_status.lower()}"
         except Exception as exc:
-            logger.error("status: failed to poll orchestrator for execution %s: %s", execution_id, exc)
+            logger.error("status: failed to poll orchestrator: %s", exc)
             short_desc = "Could not retrieve execution status"
 
-    # Extended schema validation is disabled in ONIX (extendedSchema_enabled: false) —
-    # ONIX only checks @context and @type are present (base validation).
     schema_url = "https://raw.githubusercontent.com/danielctecla/beckn-ai-agent-marketplace/main/schemas/execution-result-v1.json"
     performance = [{
         "id": "perf-001",
@@ -297,7 +342,7 @@ async def handle_status(context: dict, message: dict) -> dict:
         "performanceAttributes": {
             "@context": schema_url,
             "@type": "beckn:AgentExecution",
-            "startedAt": metadata.get("started_at") or (stored.get("confirmed_at") if stored else _now_iso()),
+            "startedAt": metadata.get("started_at") or _now_iso(),
             "completedAt": metadata.get("completed_at") or _now_iso(),
             "latencyMs": metadata.get("latency_ms") or 0,
             "tokensUsed": metadata.get("tokens_used") or {"input": 0, "output": 0, "total": 0},
@@ -307,29 +352,30 @@ async def handle_status(context: dict, message: dict) -> dict:
         },
     }]
 
-    commitments = stored.get("commitments", []) if stored else contract.get("commitments", [])
+    stored_commitments = _parse_jsonb(stored["commitments"]) if stored else []
+    commitments = stored_commitments or contract.get("commitments", [])
     if not commitments:
         commitments = [{"id": "commitment-001", "status": {"code": "ACTIVE"},
-                        "resources": [{"id": "agent-summarizer-001",
-                                       "descriptor": {"name": "AI Agent", "code": "AAS-001"},
+                        "resources": [{"id": "1", "descriptor": {"name": "AI Agent", "code": "AAS-001"},
                                        "quantity": {"unitQuantity": 1, "unitCode": "UNIT"}}],
-                        "offer": {"id": "offer-summarizer-basic", "resourceIds": ["agent-summarizer-001"]}}]
-
-    response_contract = {
-        "id": contract.get("id", stored["id"] if stored else "unknown"),
-        "commitments": commitments,
-        "performance": performance,
-    }
+                        "offer": {"id": "offer-agent-1", "resourceIds": ["1"]}}]
 
     return {
         "context": build_response_context(context, "status"),
-        "message": {"contract": response_contract},
+        "message": {
+            "contract": {
+                "id": contract.get("id", stored["contract_code"] if stored else "unknown"),
+                "commitments": commitments,
+                "performance": performance,
+            }
+        },
     }
 
 
 async def handle_cancel(context: dict, message: dict) -> dict:
-    """Handle cancel: BAP cancels the contract."""
+    txn_id = context["transactionId"]
     contract = message.get("contract", {})
+    await repo.update_contract(txn_id, status="CANCELLED")
     return {
         "context": build_response_context(context, "cancel"),
         "message": {"contract": {**contract, "status": {"code": "CANCELLED"}}},
@@ -337,7 +383,6 @@ async def handle_cancel(context: dict, message: dict) -> dict:
 
 
 async def handle_rating(context: dict, message: dict) -> dict:
-    """Handle rating: BAP rates the agent."""
     ratings = message.get("ratings", [])
     logger.info(f"rating received: {ratings}")
     return {
@@ -347,7 +392,6 @@ async def handle_rating(context: dict, message: dict) -> dict:
 
 
 async def handle_support(context: dict, message: dict) -> dict:
-    """Handle support: returns contact info."""
     return {
         "context": build_response_context(context, "support"),
         "message": {
@@ -359,7 +403,6 @@ async def handle_support(context: dict, message: dict) -> dict:
     }
 
 
-# Action dispatcher
 ACTION_HANDLERS = {
     "discover": handle_discover,
     "select": handle_select,
