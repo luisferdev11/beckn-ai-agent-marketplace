@@ -82,15 +82,27 @@ async def get_all_callbacks():
     return [dict(r) for r in rows]
 
 
-async def get_last_callback():
+async def get_last_callback(transaction_id: str | None = None):
     pool = await get_pool()
-    row = await pool.fetchrow("SELECT * FROM callbacks ORDER BY received_at DESC LIMIT 1")
+    if transaction_id:
+        row = await pool.fetchrow(
+            "SELECT * FROM callbacks WHERE transaction_id = $1 ORDER BY received_at DESC LIMIT 1",
+            transaction_id,
+        )
+    else:
+        row = await pool.fetchrow("SELECT * FROM callbacks ORDER BY received_at DESC LIMIT 1")
     return dict(row) if row else None
 
 
-async def get_callbacks_count():
+async def get_callbacks_count(transaction_id: str | None = None):
     pool = await get_pool()
-    row = await pool.fetchrow("SELECT COUNT(*) as cnt FROM callbacks")
+    if transaction_id:
+        row = await pool.fetchrow(
+            "SELECT COUNT(*) as cnt FROM callbacks WHERE transaction_id = $1",
+            transaction_id,
+        )
+    else:
+        row = await pool.fetchrow("SELECT COUNT(*) as cnt FROM callbacks")
     return row["cnt"]
 
 

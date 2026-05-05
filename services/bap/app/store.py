@@ -18,12 +18,12 @@ async def get_all_callbacks() -> list[dict]:
     return await db.get_all_callbacks()
 
 
-async def get_last_callback() -> dict | None:
-    return await db.get_last_callback()
+async def get_last_callback(transaction_id: str | None = None) -> dict | None:
+    return await db.get_last_callback(transaction_id)
 
 
-async def get_callbacks_count() -> int:
-    return await db.get_callbacks_count()
+async def get_callbacks_count(transaction_id: str | None = None) -> int:
+    return await db.get_callbacks_count(transaction_id)
 
 
 async def get_transaction(txn_id: str) -> dict | None:

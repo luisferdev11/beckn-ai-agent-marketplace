@@ -343,13 +343,13 @@ async def list_callbacks():
 
 
 @router.get("/callbacks/count")
-async def callbacks_count():
-    return {"callbacks_recibidos": await get_callbacks_count(), "status": "ok"}
+async def callbacks_count(transaction_id: str | None = None):
+    return {"callbacks_recibidos": await get_callbacks_count(transaction_id), "status": "ok"}
 
 
 @router.get("/callbacks/ultimo")
-async def last_callback():
-    cb = await get_last_callback()
+async def last_callback(transaction_id: str | None = None):
+    cb = await get_last_callback(transaction_id)
     return cb if cb else {"error": "no callbacks yet"}
 
 
