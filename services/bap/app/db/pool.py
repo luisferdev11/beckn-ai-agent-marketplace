@@ -1,4 +1,3 @@
-"""Shared PostgreSQL connection pool using asyncpg."""
 from __future__ import annotations
 
 import os

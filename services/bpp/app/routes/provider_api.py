@@ -312,7 +312,7 @@ async def list_transactions():
 @router.get("/health")
 async def health():
     from app.config import SERVICE_NAME
-    from beckn_models.db import get_pool
+    from app.db.pool import get_pool
     try:
         pool = await get_pool()
         await pool.fetchval("SELECT 1")

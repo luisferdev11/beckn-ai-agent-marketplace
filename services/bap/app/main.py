@@ -62,13 +62,13 @@ async def health():
 
 @app.on_event("startup")
 async def startup():
-    from beckn_models.db import get_pool
+    from app.db.pool import get_pool
     await get_pool()
     logger.info(f"{SERVICE_NAME} started on port {PORT} — PostgreSQL connected")
 
 
 @app.on_event("shutdown")
 async def shutdown():
-    from beckn_models.db import close_pool
+    from app.db.pool import close_pool
     await close_pool()
     logger.info("PostgreSQL pool closed")

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
-from beckn_models.db import get_pool
+from app.db.pool import get_pool
 
 logger = logging.getLogger(__name__)
 
