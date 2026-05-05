@@ -32,7 +32,7 @@ async def receive_callback(action: str, request: Request):
 
     logger.info(f"← {action} received [txn={txn_id[:8]}]")
 
-    store_callback(context, message)
+    await store_callback(context, message)
 
     return JSONResponse({"message": {"ack": {"status": "ACK"}}})
 
@@ -51,6 +51,6 @@ async def receive_callback_root(request: Request):
 
     logger.info(f"← {action} received (root endpoint) [txn={txn_id[:8]}]")
 
-    store_callback(context, message)
+    await store_callback(context, message)
 
     return JSONResponse({"message": {"ack": {"status": "ACK"}}})

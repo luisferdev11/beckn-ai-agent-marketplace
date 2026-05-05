@@ -40,10 +40,10 @@ def get(url: str):
         return json.loads(r.read().decode())
 
 
-def wait_for_callbacks(expected: int, timeout: int = 15):
+def wait_for_callbacks(expected: int, txn_id: str, timeout: int = 15):
     start = time.time()
     while time.time() - start < timeout:
-        count = get(f"{BAP}/callbacks/count")
+        count = get(f"{BAP}/callbacks/count?transaction_id={txn_id}")
         if count.get("callbacks_recibidos", 0) >= expected:
             return True
         time.sleep(1)
@@ -84,12 +84,15 @@ def main():
     print(f"  Transaction: {txn_id}")
     print(f"  ONIX ACK: {ack}")
 
-    if not wait_for_callbacks(1):
+    if not wait_for_callbacks(1, txn_id):
         print("  FAIL: on_select callback not received")
         sys.exit(1)
 
-    cb = get(f"{BAP}/callbacks/ultimo")
-    contract = cb.get("message", {}).get("contract", {})
+    cb = get(f"{BAP}/callbacks/ultimo?transaction_id={txn_id}")
+    msg = cb.get("message", {})
+    if isinstance(msg, str):
+        msg = json.loads(msg)
+    contract = msg.get("contract", {})
     consideration = contract.get("consideration", [{}])[0]
     print(f"  on_select received — price: {consideration.get('price', {}).get('currency', '?')} "
           f"{consideration.get('price', {}).get('value', '?')}")
@@ -100,7 +103,7 @@ def main():
     ack = resp.get("onix_response", {}).get("message", {}).get("ack", {}).get("status")
     print(f"  ONIX ACK: {ack}")
 
-    if not wait_for_callbacks(2):
+    if not wait_for_callbacks(2, txn_id):
         print("  FAIL: on_init callback not received")
         sys.exit(1)
     print(f"  on_init received")
@@ -116,7 +119,7 @@ def main():
     ack = resp.get("onix_response", {}).get("message", {}).get("ack", {}).get("status")
     print(f"  ONIX ACK: {ack}")
 
-    if not wait_for_callbacks(3):
+    if not wait_for_callbacks(3, txn_id):
         print("  FAIL: on_confirm callback not received")
         sys.exit(1)
     print(f"  on_confirm received — agent dispatched to orchestrator")
@@ -133,9 +136,12 @@ def main():
             print(f"  NACK: {error.get('message', '?')[:100]}")
             break
 
-        if wait_for_callbacks(4 + attempt, timeout=5):
-            cb = get(f"{BAP}/callbacks/ultimo")
-            perf = cb.get("message", {}).get("contract", {}).get("performance", [{}])[0]
+        if wait_for_callbacks(4 + attempt, txn_id, timeout=5):
+            cb = get(f"{BAP}/callbacks/ultimo?transaction_id={txn_id}")
+            msg = cb.get("message", {})
+            if isinstance(msg, str):
+                msg = json.loads(msg)
+            perf = msg.get("contract", {}).get("performance", [{}])[0]
             status_obj = perf.get("status", {})
             agent_status = status_obj.get("code", "?")
             print(f"  [{attempt+1}] Agent status: {agent_status}")
@@ -155,8 +161,8 @@ def main():
     for i, cb in enumerate(all_cbs):
         print(f"  [{i+1}] {cb['action']}")
 
-    contracts = get("http://localhost:3002/api/contracts")
-    print(f"\nBPP contracts: {contracts['total']}")
+    contracts = get("http://localhost:3002/api/transactions")
+    print(f"\nBPP transactions: {len(contracts) if isinstance(contracts, list) else contracts.get('total', '?')}")
 
     if len(all_cbs) >= 3 and agent_status == "COMPLETED":
         print("\n✓ PASS — full flow working including real agent execution")
