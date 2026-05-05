@@ -69,10 +69,14 @@ async def get_provider_by_id(provider_id: int):
 # ─── Agents ──────────────────────────────────────────────────
 
 async def create_agent(provider_id: int, category_id: int, agent_name: dict,
+                       beckn_id: str | None = None,
+                       agentfacts_id: str | None = None,
+                       agent_urn: str | None = None,
+                       label: str | None = None,
                        access_point_url: str | None = None,
                        interaction_type: str = "sync",
                        version: str = "1.0.0",
-                       capabilities: list | None = None,
+                       capabilities: dict | None = None,
                        skills: list | None = None,
                        input_schema: dict | None = None,
                        output_schema: dict | None = None,
@@ -80,23 +84,20 @@ async def create_agent(provider_id: int, category_id: int, agent_name: dict,
                        sla: dict | None = None,
                        jurisdiction: str | None = None,
                        endpoints: dict | None = None,
-                       modalities: list | None = None,
-                       authentication: dict | None = None,
                        description: str | None = None):
     pool = await get_pool()
     row = await pool.fetchrow(
         """INSERT INTO agents (provider_id, category_id, agent_name, description,
+               beckn_id, agentfacts_id, agent_urn, label,
                access_point_url, interaction_type, version,
                capabilities, skills, input_schema, output_schema,
-               pricing_model, sla, jurisdiction, endpoints, modalities, authentication)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
-           RETURNING id, provider_id, category_id, agent_name, description, version,
-                     access_point_url, interaction_type, capabilities, skills,
-                     input_schema, output_schema, pricing_model, sla, jurisdiction,
-                     endpoints, modalities, authentication, status, created_at""",
+               pricing_model, sla, jurisdiction, endpoints)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+           RETURNING *""",
         provider_id, category_id, json.dumps(agent_name), description,
+        beckn_id, agentfacts_id, agent_urn, label,
         access_point_url, interaction_type, version,
-        json.dumps(capabilities or []),
+        json.dumps(capabilities or {"modalities": ["text"], "streaming": False, "batch": False, "authentication": {"methods": ["jwt"]}}),
         json.dumps(skills or []),
         json.dumps(input_schema or {}),
         json.dumps(output_schema or {}),
@@ -104,8 +105,6 @@ async def create_agent(provider_id: int, category_id: int, agent_name: dict,
         json.dumps(sla or {}),
         jurisdiction,
         json.dumps(endpoints or {"static": []}),
-        json.dumps(modalities or ["text"]),
-        json.dumps(authentication or {"methods": ["jwt"]}),
     )
     return dict(row)
 
@@ -116,7 +115,7 @@ async def update_agent(agent_id: int, **kwargs):
     vals = []
     i = 1
     json_fields = {"agent_name", "capabilities", "skills", "input_schema", "output_schema",
-                   "pricing_model", "sla", "endpoints", "modalities", "authentication"}
+                   "pricing_model", "sla", "endpoints"}
     for key, val in kwargs.items():
         sets.append(f"{key} = ${i}")
         vals.append(json.dumps(val) if key in json_fields else val)
@@ -147,6 +146,19 @@ async def list_agents():
            ORDER BY a.id""",
     )
     return [dict(r) for r in rows]
+
+
+async def get_agent_by_beckn_id(beckn_id: str):
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        """SELECT a.*, c.name as category_name, p.organization as provider_org, p.subscriber_id
+           FROM agents a
+           JOIN categories c ON a.category_id = c.id
+           JOIN providers p ON a.provider_id = p.id
+           WHERE a.beckn_id = $1""",
+        beckn_id,
+    )
+    return dict(row) if row else None
 
 
 async def get_agent_by_id(agent_id: int):

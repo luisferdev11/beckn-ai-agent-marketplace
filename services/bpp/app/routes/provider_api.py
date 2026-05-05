@@ -66,11 +66,15 @@ class AgentCreate(BaseModel):
     provider_id: int
     category_id: int
     agent_name: dict = {}
+    beckn_id: Optional[str] = None
+    agentfacts_id: Optional[str] = None
+    agent_urn: Optional[str] = None
+    label: Optional[str] = None
     description: Optional[str] = None
     access_point_url: Optional[str] = None
     interaction_type: str = "sync"
     version: str = "1.0.0"
-    capabilities: list = []
+    capabilities: dict = {}
     skills: list = []
     input_schema: dict = {}
     output_schema: dict = {}
@@ -78,8 +82,6 @@ class AgentCreate(BaseModel):
     sla: dict = {}
     jurisdiction: Optional[str] = None
     endpoints: Optional[dict] = None
-    modalities: list = ["text"]
-    authentication: dict = {"methods": ["jwt"]}
 
 
 @router.post("/agents", status_code=201)
@@ -88,6 +90,10 @@ async def create_agent(req: AgentCreate):
         provider_id=req.provider_id,
         category_id=req.category_id,
         agent_name=req.agent_name,
+        beckn_id=req.beckn_id,
+        agentfacts_id=req.agentfacts_id,
+        agent_urn=req.agent_urn,
+        label=req.label,
         description=req.description,
         access_point_url=req.access_point_url,
         interaction_type=req.interaction_type,
@@ -100,8 +106,6 @@ async def create_agent(req: AgentCreate):
         sla=req.sla,
         jurisdiction=req.jurisdiction,
         endpoints=req.endpoints,
-        modalities=req.modalities,
-        authentication=req.authentication,
     )
     return {"agent_id": agent["id"], "agent": agent}
 
@@ -109,12 +113,14 @@ async def create_agent(req: AgentCreate):
 class AgentUpdate(BaseModel):
     version: Optional[str] = None
     pricing_model: Optional[dict] = None
-    capabilities: Optional[list] = None
+    capabilities: Optional[dict] = None
     skills: Optional[list] = None
     sla: Optional[dict] = None
     description: Optional[str] = None
     access_point_url: Optional[str] = None
     interaction_type: Optional[str] = None
+    label: Optional[str] = None
+    agent_urn: Optional[str] = None
 
 
 @router.put("/agents/{agent_id}")
@@ -151,55 +157,40 @@ async def get_agent(agent_id: int):
 
 # ─── Publish ─────────────────────────────────────────────────
 
+def _parse_jsonb(val, default=None):
+    if isinstance(val, str):
+        return json.loads(val)
+    if val is None:
+        return default
+    return val
+
+
 def _agent_to_beckn_resource(agent: dict) -> dict:
     """Convert a DB agent row to a Beckn v2 catalog resource with AgentFacts."""
-    agent_name_dict = agent["agent_name"]
-    if isinstance(agent_name_dict, str):
-        agent_name_dict = json.loads(agent_name_dict)
-    label = agent_name_dict.get("en", agent_name_dict.get("es", "AI Agent"))
-
-    caps = agent["capabilities"]
-    if isinstance(caps, str):
-        caps = json.loads(caps)
-    skills = agent["skills"]
-    if isinstance(skills, str):
-        skills = json.loads(skills)
-    pricing = agent["pricing_model"]
-    if isinstance(pricing, str):
-        pricing = json.loads(pricing)
-    sla = agent["sla"]
-    if isinstance(sla, str):
-        sla = json.loads(sla)
-    endpoints = agent["endpoints"]
-    if isinstance(endpoints, str):
-        endpoints = json.loads(endpoints)
-    modalities = agent["modalities"]
-    if isinstance(modalities, str):
-        modalities = json.loads(modalities)
-    auth = agent["authentication"]
-    if isinstance(auth, str):
-        auth = json.loads(auth)
-
-    provider_org = agent.get("provider_org", {})
-    if isinstance(provider_org, str):
-        provider_org = json.loads(provider_org)
+    label = agent.get("label") or "AI Agent"
+    caps = _parse_jsonb(agent["capabilities"], default={})
+    skills = _parse_jsonb(agent["skills"], default=[])
+    pricing = _parse_jsonb(agent["pricing_model"], default={})
+    sla = _parse_jsonb(agent["sla"], default={})
+    endpoints = _parse_jsonb(agent["endpoints"], default={"static": []})
+    provider_org = _parse_jsonb(agent.get("provider_org"), default={})
 
     schema_url = "https://raw.githubusercontent.com/danielctecla/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json"
 
     return {
-        "id": str(agent["id"]),
+        "id": agent["beckn_id"] or str(agent["id"]),
         "descriptor": {
             "name": label,
-            "shortDesc": agent.get("description", "")[:200] if agent.get("description") else "",
-            "longDesc": agent.get("description", ""),
+            "shortDesc": (agent.get("description") or "")[:200],
+            "longDesc": agent.get("description") or "",
         },
         "resourceAttributes": {
             "@context": schema_url,
             "@type": "beckn:AIAgentService",
-            "id": f"marketplace:agent-{agent['id']}",
-            "agent_name": f"urn:agent:marketplace:{label.replace(' ', '')}",
+            "id": agent.get("agentfacts_id") or f"marketplace:agent-{agent['id']}",
+            "agent_name": agent.get("agent_urn") or f"urn:agent:marketplace:{label.replace(' ', '')}",
             "label": label,
-            "description": agent.get("description", ""),
+            "description": agent.get("description") or "",
             "version": agent.get("version", "1.0.0"),
             "jurisdiction": agent.get("jurisdiction"),
             "provider": {
@@ -207,20 +198,21 @@ def _agent_to_beckn_resource(agent: dict) -> dict:
                 "url": agent.get("access_point_url", ""),
             },
             "endpoints": endpoints,
-            "capabilities": {
-                "modalities": modalities,
-                "streaming": agent.get("interaction_type") == "streaming",
-                "batch": False,
-                "authentication": auth,
-            },
-            "skills": skills if skills else [
-                {"id": c, "description": c, "inputModes": ["text/plain"], "outputModes": ["application/json"]}
-                for c in caps
-            ],
+            "capabilities": caps,
+            "skills": skills,
             "sla": sla,
             "pricing": pricing,
         },
     }
+
+
+@router.get("/catalog")
+async def get_catalog():
+    """Return the current catalog of active agents (used by smoke test and frontend)."""
+    agents = await repo.list_agents()
+    active_agents = [a for a in agents if a["status"] == "active"]
+    resources = [_agent_to_beckn_resource(a) for a in active_agents]
+    return {"resources": resources, "total": len(resources)}
 
 
 @router.post("/publish")

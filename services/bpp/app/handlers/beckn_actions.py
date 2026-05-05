@@ -12,7 +12,6 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from app.config import AGENT_URL_MAP
 from app.db import repository as repo
 from app.handlers import orchestrator_client
 from app.routes.provider_api import _agent_to_beckn_resource
@@ -85,7 +84,7 @@ async def handle_discover(context: dict, message: dict) -> dict:
                 "descriptor": {
                     "name": (json.loads(a['agent_name']) if isinstance(a['agent_name'], str) else a['agent_name']).get('en', 'Agent'),
                 },
-                "resourceIds": [str(a["id"])],
+                "resourceIds": [a["beckn_id"] or str(a["id"])],
             }
             for a in agents
         ],
@@ -113,12 +112,8 @@ async def handle_select(context: dict, message: dict) -> dict:
         breakup = []
 
         for res in resources:
-            agent_id_str = res.get("id", "")
-            try:
-                agent_id_int = int(agent_id_str)
-                agent = await repo.get_agent_by_id(agent_id_int)
-            except (ValueError, TypeError):
-                agent = None
+            agent_beckn_id = res.get("id", "")
+            agent = await repo.get_agent_by_beckn_id(agent_beckn_id)
 
             qty = res.get("quantity", {}).get("unitQuantity", 1)
             if agent:
@@ -126,8 +121,7 @@ async def handle_select(context: dict, message: dict) -> dict:
                 unit_price = pricing.get("value", pricing.get("unitPrice", 0))
                 line_total = float(unit_price) * qty
                 total_price += line_total
-                name = _parse_jsonb(agent.get("agent_name", {}))
-                label = name.get("en", "Agent") if isinstance(name, dict) else str(name)
+                label = agent.get("label") or "Agent"
                 breakup.append({
                     "title": f"{label} x{qty}",
                     "price": {"currency": pricing.get("currency", "INR"), "value": f"{line_total:.2f}"},
@@ -143,6 +137,14 @@ async def handle_select(context: dict, message: dict) -> dict:
             "breakup": breakup,
         })
 
+    # Resolve agent_id from the first commitment resource
+    agent_db_id = None
+    if commitments:
+        first_res = commitments[0].get("resources", [{}])[0]
+        agent = await repo.get_agent_by_beckn_id(first_res.get("id", ""))
+        if agent:
+            agent_db_id = agent["id"]
+
     await repo.create_contract(
         contract_code=contract_code,
         transaction_id=txn_id,
@@ -150,6 +152,7 @@ async def handle_select(context: dict, message: dict) -> dict:
         consideration=considerations,
         participants=participants,
         status="DRAFT",
+        agent_id=agent_db_id,
         bap_id=context.get("bapId"),
         bpp_id=context.get("bppId"),
         total_amount=sum(float(c["price"]["value"]) for c in considerations) if considerations else None,
@@ -255,36 +258,30 @@ async def _dispatch_to_orchestrator(txn_id: str, stored: dict) -> None:
     if not resources:
         return
 
-    agent_id_str = resources[0].get("id", "")
+    agent_beckn_id = resources[0].get("id", "")
+    agent_url = "http://agents:3004"
+    sla = {}
 
-    # Try to resolve agent URL from DB or fallback to config
-    agent_url = AGENT_URL_MAP.get(agent_id_str, "http://agents:3004")
+    agent = await repo.get_agent_by_beckn_id(agent_beckn_id)
+    if agent:
+        sla = _parse_jsonb(agent.get("sla", {}))
+        agent_url = agent.get("access_point_url") or agent_url
 
     # Extract prompt from multiple possible locations in the commitment
     agent_input = commitments[0].get("performanceAttributes", {}) or {}
-    # Also check resource descriptor longDesc (used for text prompts)
     resources = commitments[0].get("resources", [])
     if resources and not agent_input:
         desc = resources[0].get("descriptor", {})
         prompt_text = desc.get("longDesc", "") or desc.get("shortDesc", "")
         if prompt_text:
             agent_input = {"prompt": prompt_text}
-    sla = {}
-    try:
-        agent_id_int = int(agent_id_str)
-        agent = await repo.get_agent_by_id(agent_id_int)
-        if agent:
-            sla = _parse_jsonb(agent.get("sla", {}))
-            agent_url = agent.get("access_point_url") or agent_url
-    except (ValueError, TypeError):
-        pass
 
     timeout_ms = int(sla.get("maxLatencyMs", 30000))
 
     try:
         ack = await orchestrator_client.start_execution({
             "contract_id": stored["contract_code"],
-            "agent_id": agent_id_str,
+            "agent_id": agent_beckn_id,
             "agent_url": agent_url,
             "input": agent_input,
             "timeout_ms": timeout_ms,
