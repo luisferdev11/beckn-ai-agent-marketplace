@@ -12,6 +12,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
+from app.config import BPP_ID, BPP_URI
 from app.db import repository as repo
 from app.handlers import orchestrator_client
 from app.routes.provider_api import _agent_to_beckn_resource
@@ -25,9 +26,19 @@ def _now_iso() -> str:
 
 
 def build_response_context(incoming_context: dict, action: str) -> dict:
+    """
+    Build the on_* callback context from the incoming context.
+
+    Self-identify: when the Discovery Service fan-outs a discover, every BPP
+    receives it with the BAP's default bppId. Each BPP MUST overwrite
+    bppId/bppUri here with its own config so ONIX-BPP-X signs with its
+    own keypair and the BAP attributes the catalog correctly.
+    """
     ctx = {**incoming_context}
     ctx["action"] = f"on_{action}"
     ctx["timestamp"] = _now_iso()
+    ctx["bppId"] = BPP_ID
+    ctx["bppUri"] = BPP_URI
     return ctx
 
 
