@@ -203,7 +203,13 @@ OFFERS = [_make_offer(a["id"], a["descriptor"]["name"]) for a in AGENTS]
 
 
 def get_catalog_for_publish():
-    """Return the catalog payload for Beckn publish and internal use."""
+    """Return the catalog payload for Beckn publish and internal use.
+
+    The Beckn v2 Catalog schema declares additionalProperties: false, so
+    extension fields (like the legacy publishDirectives one) cause ONIX
+    to reject the on_discover with HTTP 400. Stick to the canonical
+    fields declared in the spec.
+    """
     return {
         "id": "catalog-serg-ops-001",
         "descriptor": {
@@ -213,7 +219,6 @@ def get_catalog_for_publish():
         "provider": PROVIDER,
         "resources": AGENTS,
         "offers": OFFERS,
-        "publishDirectives": {"catalogType": "regular"},
     }
 
 
