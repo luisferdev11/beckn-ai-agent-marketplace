@@ -52,7 +52,11 @@ async def store_callback(context: dict, message: dict):
             if contract_data.get("settlements"):
                 updates["settlements"] = contract_data["settlements"]
             if action == "on_confirm":
-                updates["status"] = "CONFIRMED"
+                # Use ACTIVE — the contracts.status CHECK constraint in
+                # 001_schema.sql only accepts DRAFT/ACTIVE/COMPLETED/FAILED/CANCELLED.
+                # The contract is "active" once confirmed; it transitions to
+                # COMPLETED when on_status arrives with a terminal execution.
+                updates["status"] = "ACTIVE"
         elif action == "on_status":
             if contract_data.get("performance"):
                 updates["performance"] = contract_data["performance"]
