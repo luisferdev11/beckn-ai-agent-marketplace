@@ -258,6 +258,29 @@ services:
     networks:
       - beckn_network
 
+  # DISCOVERY SERVICE — local DS that fans out a `discover` to every
+  # registered BPP. Replaces the production DS hosted by Beckn One at
+  # fabric.nfh.global until we have a public domain. ONIX-BAP routes
+  # the discover action here (see infra/onix/generic-routing-BAPCaller.yaml);
+  # each BPP responds with its own on_discover via the standard ONIX path.
+  discovery:
+    build:
+      context: ..
+      dockerfile: services/discovery/Dockerfile
+    ports:
+      - "3007:3007"
+    environment:
+      - DISCOVERY_CONFIG_PATH=/app/config/bpps.yaml
+    volumes:
+      - ./discovery:/app/config:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3007/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - beckn_network
+
   # FRONTEND — React + Next.js
   # UI del marketplace. Consume la API REST del BAP via rewrites de Next.js.
   # Todas las llamadas al BAP van a /api/bap/* y Next.js las proxea internamente.
