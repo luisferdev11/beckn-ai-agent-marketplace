@@ -1,0 +1,146 @@
+appName: "onix-generic-bpp-serg"
+log:
+  level: debug
+  destinations:
+    - type: stdout
+  contextKeys:
+    - transactionId
+    - messageId
+http:
+  port: 8083
+  timeout:
+    read: 30
+    write: 30
+    idle: 30
+pluginManager:
+  root: ./plugins
+
+modules:
+  # ─────────────────────────────────────────────────────────────────
+  # BPP Receiver  — accepts action requests from BAPs
+  # Listens at:  http://localhost:8083/bpp/receiver/
+  # bppUri in DeDi      = http://onix-bpp-serg:8083/bpp/receiver
+  # ─────────────────────────────────────────────────────────────────
+  - name: bppTxnReceiver
+    path: /bpp/receiver/
+    handler:
+      type: std
+      role: bpp
+      httpClientConfig:
+        maxIdleConns: 1000
+        maxIdleConnsPerHost: 200
+        idleConnTimeout: 300s
+        responseHeaderTimeout: 5s
+      plugins:
+        registry:
+          id: dediregistry
+          config:
+            url: http://mock-network:8090/registry/dedi
+            registryName: subscribers.beckn.one
+            timeout: 10
+            retry_max: 3
+            retry_wait_min: 100ms
+            retry_wait_max: 500ms
+        keyManager:
+          id: simplekeymanager
+          config:
+            networkParticipant: bpp-serg.example.com
+            keyId: pClVgxigKJJYq7bRoopmz8hDxeRhLft7mJDpCpKznGfAmfVD20
+            signingPrivateKey: m5WNqGAcnKMDxQL5zgtyvf8u9T/EHaLnNZ97WixbybI=
+            signingPublicKey: bfbdo3TxLzSRutUMSjl+OeDtZgqVDlCuLbR2aDbtPN0=
+            encrPrivateKey: m5WNqGAcnKMDxQL5zgtyvf8u9T/EHaLnNZ97WixbybI=
+            encrPublicKey: bfbdo3TxLzSRutUMSjl+OeDtZgqVDlCuLbR2aDbtPN0=
+        cache:
+          id: cache
+          config:
+            addr: redis:6379
+        schemaValidator:
+          id: schemav2validator
+          config:
+            type: url
+            location: https://raw.githubusercontent.com/beckn/protocol-specifications-v2/refs/heads/draft/api/v2.0.0/beckn.yaml
+            cacheTTL: "3600"
+            extendedSchema_enabled: "false"
+            extendedSchema_cacheTTL: "86400"
+            extendedSchema_maxCacheSize: "100"
+            extendedSchema_downloadTimeout: "30"
+            extendedSchema_allowedDomains: "raw.githubusercontent.com,schema.beckn.io"
+        signValidator:
+          id: signvalidator
+        router:
+          id: router
+          config:
+            routingConfig: ./config/generic-routing-BPPReceiver-serg.yaml
+        middleware:
+          - id: reqpreprocessor
+            config:
+              contextKeys: transactionId,messageId
+              role: bpp
+      steps:
+        - validateSign
+        - addRoute
+        - validateSchema
+
+  # ─────────────────────────────────────────────────────────────────
+  # BPP Caller  — forwards on_* callbacks back to the originating BAP
+  # Listens at:  http://localhost:8083/bpp/caller/
+  # ─────────────────────────────────────────────────────────────────
+  - name: bppTxnCaller
+    path: /bpp/caller/
+    handler:
+      type: std
+      role: bpp
+      httpClientConfig:
+        maxIdleConns: 1000
+        maxIdleConnsPerHost: 200
+        idleConnTimeout: 300s
+        responseHeaderTimeout: 5s
+      plugins:
+        registry:
+          id: dediregistry
+          config:
+            url: http://mock-network:8090/registry/dedi
+            registryName: subscribers.beckn.one
+            timeout: 10
+            retry_max: 3
+            retry_wait_min: 100ms
+            retry_wait_max: 500ms
+        keyManager:
+          id: simplekeymanager
+          config:
+            networkParticipant: bpp-serg.example.com
+            keyId: pClVgxigKJJYq7bRoopmz8hDxeRhLft7mJDpCpKznGfAmfVD20
+            signingPrivateKey: m5WNqGAcnKMDxQL5zgtyvf8u9T/EHaLnNZ97WixbybI=
+            signingPublicKey: bfbdo3TxLzSRutUMSjl+OeDtZgqVDlCuLbR2aDbtPN0=
+            encrPrivateKey: m5WNqGAcnKMDxQL5zgtyvf8u9T/EHaLnNZ97WixbybI=
+            encrPublicKey: bfbdo3TxLzSRutUMSjl+OeDtZgqVDlCuLbR2aDbtPN0=
+        cache:
+          id: cache
+          config:
+            addr: redis:6379
+        schemaValidator:
+          id: schemav2validator
+          config:
+            type: url
+            location: https://raw.githubusercontent.com/beckn/protocol-specifications-v2/refs/heads/draft/api/v2.0.0/beckn.yaml
+            cacheTTL: "3600"
+            extendedSchema_enabled: "false"
+            extendedSchema_cacheTTL: "86400"
+            extendedSchema_maxCacheSize: "100"
+            extendedSchema_downloadTimeout: "30"
+            extendedSchema_allowedDomains: "raw.githubusercontent.com,schema.beckn.io"
+        router:
+          id: router
+          config:
+            routingConfig: ./config/generic-routing-BPPCaller-serg.yaml
+        signer:
+          id: signer
+        middleware:
+          - id: reqpreprocessor
+            config:
+              contextKeys: transactionId,messageId
+              role: bpp
+      steps:
+        - addRoute
+        - sign
+        - validateSchema

@@ -79,6 +79,31 @@ SUBSCRIBERS: dict[str, dict] = {
             "ttl": 600,
         },
     },
+    "bpp-serg.example.com": {
+        "message": "ok",
+        "data": {
+            "namespace": "beckn-one",
+            "namespace_id": "76EU7wu5EJGPXGeM4QxyWf8YEU9N1wYnNmGrEUZMK33PJT3uGRQwK4",
+            "registry_id": "76EU8REebknSwWigtj7L6uFrAfpqRMRuXrY3jtpEmv7dpXPB9Zxpwb",
+            "registry_name": "example-NPs",
+            "record_id": "76EU7sergsergsergsergsergsergsergsergsergsergsergsergsr",
+            "record_name": "serg-ops-bpp",
+            "description": "Subscription details",
+            "details": {
+                "subscriber_id": "bpp-serg.example.com",
+                "url": "http://onix-bpp-serg:8083/bpp/receiver",
+                "type": "BPP",
+                "domain": "*",
+                "countries": ["MEX"],
+                "signing_public_key": "bfbdo3TxLzSRutUMSjl+OeDtZgqVDlCuLbR2aDbtPN0=",
+            },
+            "meta": {},
+            "parent_namespaces": ["beckn.one", "nfh.global"],
+            "network_memberships": ["beckn.one/testnet"],
+            "state": "live",
+            "ttl": 600,
+        },
+    },
 }
 
 

@@ -1,0 +1,12 @@
+# Agent routing for bpp-serg (Serg Ops).
+# Each entry maps an agent_id from the BPP catalog to the URL of the
+# agent runtime that hosts it. The orchestrator uses this to dispatch
+# /task calls when a contract is confirmed.
+
+agents:
+  summarizer-v1:    http://agents-serg:3006
+  extractor-v1:     http://agents-serg:3006
+  code-reviewer-v1: http://agents-serg:3006
+  translator-v1:    http://agents-serg:3006
+  email-writer-v1:  http://agents-serg:3006
+  sentiment-v1:     http://agents-serg:3006
