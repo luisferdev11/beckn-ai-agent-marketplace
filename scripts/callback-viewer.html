@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Beckn Callback Viewer</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Menlo', 'Consolas', monospace; background: #0d1117; color: #c9d1d9; padding: 20px; }
+  h1 { color: #58a6ff; margin-bottom: 8px; font-size: 1.4em; }
+  .toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+  .toolbar label { color: #8b949e; font-size: 0.85em; }
+  .toolbar select, .toolbar input { background: #161b22; color: #c9d1d9; border: 1px solid #30363d; padding: 4px 8px; border-radius: 4px; font-family: inherit; font-size: 0.85em; }
+  .status { font-size: 0.8em; color: #8b949e; margin-left: auto; }
+  .status .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+  .dot.ok { background: #3fb950; }
+  .dot.err { background: #f85149; }
+
+  .callback { background: #161b22; border: 1px solid #30363d; border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
+  .callback-header { display: flex; align-items: center; gap: 12px; padding: 10px 14px; cursor: pointer; user-select: none; }
+  .callback-header:hover { background: #1c2128; }
+  .badge { padding: 2px 8px; border-radius: 4px; font-size: 0.75em; font-weight: bold; text-transform: uppercase; }
+  .badge.on_discover { background: #1f6feb33; color: #58a6ff; }
+  .badge.on_select { background: #8957e533; color: #bc8cff; }
+  .badge.on_init { background: #f0883e33; color: #f0883e; }
+  .badge.on_confirm { background: #3fb95033; color: #3fb950; }
+  .badge.on_status { background: #da368433; color: #f778ba; }
+  .badge.on_cancel { background: #f8514933; color: #f85149; }
+  .badge.on_rate { background: #d2a832933; color: #d2a832; }
+  .callback-id { color: #8b949e; font-size: 0.8em; }
+  .callback-txn { color: #8b949e; font-size: 0.8em; font-family: monospace; }
+  .callback-time { color: #8b949e; font-size: 0.75em; margin-left: auto; white-space: nowrap; }
+  .arrow { color: #484f58; transition: transform 0.2s; }
+  .arrow.open { transform: rotate(90deg); }
+
+  .callback-body { display: none; border-top: 1px solid #30363d; }
+  .callback-body.open { display: block; }
+  .section { padding: 12px 14px; border-bottom: 1px solid #21262d; }
+  .section:last-child { border-bottom: none; }
+  .section-title { color: #58a6ff; font-size: 0.8em; font-weight: bold; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+  /* Context as a compact key-value grid */
+  .kv-grid { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 0.82em; }
+  .kv-grid .key { color: #7ee787; }
+  .kv-grid .val { color: #c9d1d9; word-break: break-all; }
+
+  /* Message: collapsible JSON tree */
+  .json-tree { font-size: 0.82em; line-height: 1.6; }
+  .json-key { color: #7ee787; }
+  .json-str { color: #a5d6ff; }
+  .json-num { color: #f0883e; }
+  .json-bool { color: #f778ba; }
+  .json-null { color: #8b949e; }
+  .json-bracket { color: #8b949e; }
+  .json-toggle { cursor: pointer; user-select: none; }
+  .json-toggle:hover { text-decoration: underline; }
+  .json-collapsed { display: none; }
+  .json-summary { color: #484f58; font-style: italic; }
+
+  /* Special rendering for catalog resources */
+  .agent-card { background: #1c2128; border: 1px solid #30363d; border-radius: 6px; padding: 10px; margin: 6px 0; }
+  .agent-card .agent-name { color: #58a6ff; font-weight: bold; font-size: 0.95em; }
+  .agent-card .agent-desc { color: #8b949e; font-size: 0.82em; margin-top: 2px; }
+  .agent-card .agent-meta { display: flex; gap: 12px; margin-top: 6px; flex-wrap: wrap; }
+  .agent-card .meta-tag { background: #30363d; padding: 1px 6px; border-radius: 3px; font-size: 0.75em; color: #c9d1d9; }
+
+  /* Performance result */
+  .result-text { background: #1c2128; border: 1px solid #30363d; border-radius: 6px; padding: 12px; margin-top: 6px; white-space: pre-wrap; font-size: 0.85em; line-height: 1.5; color: #c9d1d9; max-height: 400px; overflow-y: auto; }
+
+  .empty { text-align: center; padding: 60px 20px; color: #484f58; }
+</style>
+</head>
+<body>
+
+<h1>Beckn Callback Viewer</h1>
+<div class="toolbar">
+  <label>Filter action:</label>
+  <select id="filterAction">
+    <option value="">All</option>
+    <option value="on_discover">on_discover</option>
+    <option value="on_select">on_select</option>
+    <option value="on_init">on_init</option>
+    <option value="on_confirm">on_confirm</option>
+    <option value="on_status">on_status</option>
+    <option value="on_cancel">on_cancel</option>
+  </select>
+  <label>Filter txn:</label>
+  <input id="filterTxn" placeholder="transaction_id..." size="24">
+  <label><input type="checkbox" id="autoRefresh" checked> Auto-refresh (5s)</label>
+  <div class="status" id="statusIndicator"><span class="dot ok"></span>Connected</div>
+</div>
+
+<div id="container"><div class="empty">Loading callbacks...</div></div>
+
+<script>
+const API = 'http://localhost:3001/api/callbacks';
+const container = document.getElementById('container');
+const filterAction = document.getElementById('filterAction');
+const filterTxn = document.getElementById('filterTxn');
+const autoRefresh = document.getElementById('autoRefresh');
+const statusIndicator = document.getElementById('statusIndicator');
+
+let allCallbacks = [];
+let timer = null;
+
+async function fetchCallbacks() {
+  try {
+    const res = await fetch(API);
+    allCallbacks = await res.json();
+    statusIndicator.innerHTML = '<span class="dot ok"></span>Connected';
+    render();
+  } catch (e) {
+    statusIndicator.innerHTML = '<span class="dot err"></span>Error: ' + e.message;
+  }
+}
+
+function render() {
+  let filtered = allCallbacks;
+  const actionFilter = filterAction.value;
+  const txnFilter = filterTxn.value.trim().toLowerCase();
+  if (actionFilter) filtered = filtered.filter(c => c.action === actionFilter);
+  if (txnFilter) filtered = filtered.filter(c => c.transaction_id.toLowerCase().includes(txnFilter));
+
+  if (!filtered.length) {
+    container.innerHTML = '<div class="empty">No callbacks found</div>';
+    return;
+  }
+
+  container.innerHTML = filtered.map(cb => renderCallback(cb)).join('');
+}
+
+function renderCallback(cb) {
+  const ctx = safeParse(cb.context);
+  const msg = safeParse(cb.message);
+  const time = new Date(cb.received_at).toLocaleString();
+  const actionClass = cb.action || '';
+
+  return `
+    <div class="callback">
+      <div class="callback-header" onclick="toggleBody(this)">
+        <span class="arrow">&#9654;</span>
+        <span class="badge ${actionClass}">${cb.action}</span>
+        <span class="callback-id">#${cb.id}</span>
+        <span class="callback-txn" title="${cb.transaction_id}">${cb.transaction_id.slice(0,8)}...</span>
+        <span class="callback-time">${time}</span>
+      </div>
+      <div class="callback-body">
+        <div class="section">
+          <div class="section-title">Context</div>
+          ${renderContext(ctx)}
+        </div>
+        <div class="section">
+          <div class="section-title">Message</div>
+          ${renderMessage(msg, cb.action)}
+        </div>
+      </div>
+    </div>`;
+}
+
+function toggleBody(header) {
+  const body = header.nextElementSibling;
+  const arrow = header.querySelector('.arrow');
+  body.classList.toggle('open');
+  arrow.classList.toggle('open');
+}
+
+function safeParse(s) {
+  if (typeof s === 'object') return s;
+  try { return JSON.parse(s); } catch { return s; }
+}
+
+function renderContext(ctx) {
+  if (typeof ctx !== 'object' || !ctx) return `<pre>${esc(JSON.stringify(ctx, null, 2))}</pre>`;
+  const keys = ['action','transactionId','messageId','networkId','bapId','bppId','version','timestamp','ttl'];
+  let html = '<div class="kv-grid">';
+  for (const k of keys) {
+    if (ctx[k] !== undefined) html += `<span class="key">${k}</span><span class="val">${esc(String(ctx[k]))}</span>`;
+  }
+  // extra keys
+  for (const k of Object.keys(ctx)) {
+    if (!keys.includes(k)) html += `<span class="key">${k}</span><span class="val">${esc(JSON.stringify(ctx[k]))}</span>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+function renderMessage(msg, action) {
+  if (!msg || typeof msg !== 'object') return `<pre>${esc(String(msg))}</pre>`;
+
+  // Special rendering for on_discover: show agent cards
+  if (action === 'on_discover' && msg.catalogs) {
+    return renderCatalogs(msg.catalogs);
+  }
+
+  // Special rendering for on_status with performance results
+  if (action === 'on_status' && msg.contract?.performance) {
+    return renderStatus(msg);
+  }
+
+  // Default: pretty JSON tree
+  return `<div class="json-tree">${renderJson(msg, 0)}</div>`;
+}
+
+function renderCatalogs(catalogs) {
+  let html = '';
+  for (const cat of catalogs) {
+    const desc = cat.descriptor || {};
+    html += `<div style="margin-bottom:8px;color:#8b949e;font-size:0.85em">${esc(desc.name || 'Catalog')} &mdash; ${esc(desc.shortDesc || '')}</div>`;
+
+    if (cat.resources) {
+      for (const r of cat.resources) {
+        const d = r.descriptor || {};
+        const ra = r.resourceAttributes || {};
+        const pricing = ra.pricing || {};
+        const skills = ra.skills || [];
+        const sla = ra.sla || {};
+        const caps = ra.capabilities || {};
+
+        html += `<div class="agent-card">
+          <div class="agent-name">${esc(d.name || r.id)}</div>
+          <div class="agent-desc">${esc(d.shortDesc || ra.description || '')}</div>
+          <div class="agent-meta">
+            <span class="meta-tag">ID: ${esc(r.id)}</span>
+            ${pricing.value ? `<span class="meta-tag">${pricing.value} ${pricing.currency || ''}</span>` : ''}
+            ${pricing.type || pricing.model ? `<span class="meta-tag">${esc(pricing.type || pricing.model)}</span>` : ''}
+            ${sla.maxLatencyMs ? `<span class="meta-tag">latency &le;${sla.maxLatencyMs}ms</span>` : ''}
+            ${sla.accuracy ? `<span class="meta-tag">accuracy ${(sla.accuracy*100).toFixed(0)}%</span>` : ''}
+            ${caps.modalities ? `<span class="meta-tag">${caps.modalities.join(', ')}</span>` : ''}
+            ${ra.jurisdiction ? `<span class="meta-tag">${esc(ra.jurisdiction)}</span>` : ''}
+          </div>
+          ${skills.length ? `<div style="margin-top:6px;font-size:0.78em;color:#8b949e">Skills: ${skills.map(s => esc(s.id || s.description || '')).join(', ')}</div>` : ''}
+        </div>`;
+      }
+    }
+  }
+  return html;
+}
+
+function renderStatus(msg) {
+  const contract = msg.contract;
+  let html = '';
+
+  // Contract header
+  if (contract.id) html += `<div style="margin-bottom:8px"><span class="json-key">contract</span> ${esc(contract.id)}</div>`;
+
+  // Commitments summary
+  if (contract.commitments?.length) {
+    for (const c of contract.commitments) {
+      const res = c.resources?.[0] || {};
+      const desc = res.descriptor || {};
+      html += `<div class="agent-card">
+        <div class="agent-name">${esc(desc.name || c.id)}</div>
+        ${desc.longDesc ? `<div class="agent-desc" style="margin-top:4px"><strong>Prompt:</strong> ${esc(desc.longDesc)}</div>` : ''}
+      </div>`;
+    }
+  }
+
+  // Performance results
+  if (contract.performance?.length) {
+    for (const p of contract.performance) {
+      const st = p.status || {};
+      const pa = p.performanceAttributes || {};
+      const statusCode = st.code || 'UNKNOWN';
+      const statusColor = statusCode === 'COMPLETED' ? '#3fb950' : statusCode === 'FAILED' ? '#f85149' : '#f0883e';
+
+      html += `<div style="margin-top:8px">
+        <span style="color:${statusColor};font-weight:bold">${esc(statusCode)}</span>`;
+
+      if (pa.model) html += ` <span class="meta-tag" style="background:#30363d;padding:1px 6px;border-radius:3px;font-size:0.75em">${esc(pa.model)}</span>`;
+      if (pa.latencyMs) html += ` <span style="color:#8b949e;font-size:0.82em">${pa.latencyMs}ms</span>`;
+      if (pa.tokensUsed) html += ` <span style="color:#8b949e;font-size:0.82em">${pa.tokensUsed.total} tokens (${pa.tokensUsed.input}in/${pa.tokensUsed.output}out)</span>`;
+
+      html += `</div>`;
+
+      // Show the actual result text
+      if (pa.result?.text) {
+        html += `<div class="result-text">${esc(pa.result.text)}</div>`;
+      } else if (pa.result && Object.keys(pa.result).length) {
+        html += `<div class="result-text">${esc(JSON.stringify(pa.result, null, 2))}</div>`;
+      }
+    }
+  }
+
+  // Settlements, participants, consideration as compact JSON
+  const extras = {};
+  if (contract.settlements) extras.settlements = contract.settlements;
+  if (contract.participants) extras.participants = contract.participants;
+  if (contract.consideration) extras.consideration = contract.consideration;
+  if (Object.keys(extras).length) {
+    html += `<details style="margin-top:8px"><summary style="cursor:pointer;color:#8b949e;font-size:0.82em">Details (settlements, participants...)</summary>
+      <div class="json-tree" style="margin-top:6px">${renderJson(extras, 0)}</div></details>`;
+  }
+
+  return html;
+}
+
+function renderJson(obj, depth) {
+  if (obj === null) return '<span class="json-null">null</span>';
+  if (typeof obj === 'boolean') return `<span class="json-bool">${obj}</span>`;
+  if (typeof obj === 'number') return `<span class="json-num">${obj}</span>`;
+  if (typeof obj === 'string') return `<span class="json-str">"${esc(obj)}"</span>`;
+
+  if (Array.isArray(obj)) {
+    if (!obj.length) return '<span class="json-bracket">[]</span>';
+    const id = 'j' + Math.random().toString(36).slice(2, 8);
+    const indent = '  '.repeat(depth + 1);
+    const closingIndent = '  '.repeat(depth);
+    let items = obj.map(v => indent + renderJson(v, depth + 1)).join(',\n');
+    return `<span class="json-bracket">[</span><span class="json-toggle" onclick="document.getElementById('${id}').classList.toggle('json-collapsed');this.nextElementSibling.classList.toggle('json-collapsed')"><span class="json-summary"> ${obj.length} items...</span></span><span id="${id}">\n${items}\n${closingIndent}</span><span class="json-bracket">]</span>`;
+  }
+
+  if (typeof obj === 'object') {
+    const keys = Object.keys(obj);
+    if (!keys.length) return '<span class="json-bracket">{}</span>';
+    const id = 'j' + Math.random().toString(36).slice(2, 8);
+    const indent = '  '.repeat(depth + 1);
+    const closingIndent = '  '.repeat(depth);
+    let items = keys.map(k => `${indent}<span class="json-key">"${esc(k)}"</span>: ${renderJson(obj[k], depth + 1)}`).join(',\n');
+    const preview = keys.slice(0, 3).join(', ') + (keys.length > 3 ? '...' : '');
+    if (depth > 1) {
+      return `<span class="json-bracket">{</span><span class="json-toggle" onclick="document.getElementById('${id}').classList.toggle('json-collapsed');this.nextElementSibling.classList.toggle('json-collapsed')"><span class="json-summary"> {${preview}}</span></span><span id="${id}" class="json-collapsed">\n${items}\n${closingIndent}</span><span class="json-bracket">}</span>`;
+    }
+    return `<span class="json-bracket">{</span>\n${items}\n${closingIndent}<span class="json-bracket">}</span>`;
+  }
+
+  return esc(String(obj));
+}
+
+function esc(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+filterAction.addEventListener('change', render);
+filterTxn.addEventListener('input', render);
+autoRefresh.addEventListener('change', () => {
+  if (autoRefresh.checked) startTimer(); else stopTimer();
+});
+
+function startTimer() { stopTimer(); timer = setInterval(fetchCallbacks, 5000); }
+function stopTimer() { if (timer) { clearInterval(timer); timer = null; } }
+
+fetchCallbacks();
+startTimer();
+</script>
+</body>
+</html>
