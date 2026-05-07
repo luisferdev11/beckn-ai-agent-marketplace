@@ -1,0 +1,10 @@
+# Discovery Service registry — every BPP listed here will receive a
+# fan-out when a `discover` is posted to the DS.
+#
+# Add a new BPP by appending an entry. The receiver_url must be reachable
+# from the discovery container on the docker network.
+
+bpps:
+  - subscriber_id: bpp.example.com
+    receiver_url: http://onix-bpp:8082/bpp/receiver
+    name: General Tecla Industries
