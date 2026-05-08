@@ -120,6 +120,11 @@ class TxnRequest(BaseModel):
     transaction_id: str
 
 
+class ConfirmRequest(BaseModel):
+    transaction_id: str
+    prompt: Optional[str] = None
+
+
 @router.post("/contracts/init")
 async def init(req: TxnRequest):
     """Continue transaction: provide fulfillment details.
@@ -171,9 +176,10 @@ async def init(req: TxnRequest):
 
 
 @router.post("/contracts/confirm")
-async def confirm(req: TxnRequest):
+async def confirm(req: ConfirmRequest):
     """Confirm the transaction: trigger agent execution.
-    Uses stored contract data from on_select/on_init callbacks."""
+    Uses stored contract data from on_select/on_init callbacks.
+    Accepts optional prompt to inject into commitment resources."""
     contract = await get_transaction_contract(req.transaction_id)
     ctx = _build_context("confirm", req.transaction_id)
 
@@ -202,6 +208,13 @@ async def confirm(req: TxnRequest):
                 ic["status"] = {"descriptor": {"code": status["code"]}}
             confirm_commitments.append(ic)
         commitments = confirm_commitments
+
+    # Inject user prompt into commitment resources
+    if req.prompt:
+        for c in commitments:
+            resources = c.get("resources", [])
+            if resources:
+                resources[0].setdefault("descriptor", {})["longDesc"] = req.prompt
 
     if not participants:
         participants = [{"id": "participant-buyer-001", "descriptor": {"name": "Marketplace User", "code": "buyer"}}]
