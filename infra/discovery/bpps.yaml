@@ -8,3 +8,7 @@ bpps:
   - subscriber_id: bpp.example.com
     receiver_url: http://onix-bpp:8082/bpp/receiver
     name: General Tecla Industries
+
+  - subscriber_id: bpp-serg.example.com
+    receiver_url: http://onix-bpp-serg:8083/bpp/receiver
+    name: Serg Ops

@@ -29,6 +29,7 @@ from app.config import BAP_CALLER_URL, BAP_ID, BAP_URI, BPP_ID, BPP_URI, NETWORK
 from app.store import (
     get_all_callbacks, get_last_callback, get_callbacks_count,
     get_all_transactions, get_transaction, get_transaction_contract,
+    set_transaction_target, get_transaction_target,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,20 +42,33 @@ def _now_iso() -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
 
 
-def _build_context(action: str, transaction_id: str | None = None) -> dict:
+def _build_context(
+    action: str,
+    transaction_id: str | None = None,
+    bpp_id: str | None = None,
+    bpp_uri: str | None = None,
+) -> dict:
     return {
         "networkId": NETWORK_ID,
         "action": action,
         "version": "2.0.0",
         "bapId": BAP_ID,
         "bapUri": BAP_URI,
-        "bppId": BPP_ID,
-        "bppUri": BPP_URI,
+        "bppId": bpp_id or BPP_ID,
+        "bppUri": bpp_uri or BPP_URI,
         "transactionId": transaction_id or str(uuid.uuid4()),
         "messageId": str(uuid.uuid4()),
         "timestamp": _now_iso(),
         "ttl": "PT30S",
     }
+
+
+def _resolve_bpp_target(req_bpp_id: str | None, req_bpp_uri: str | None, txn_id: str) -> tuple[str | None, str | None]:
+    """Pick the BPP target: explicit override > stored from select > config default."""
+    if req_bpp_id and req_bpp_uri:
+        return req_bpp_id, req_bpp_uri
+    target = get_transaction_target(txn_id)
+    return target.get("bpp_id") or req_bpp_id, target.get("bpp_uri") or req_bpp_uri
 
 
 async def _send_to_onix(action: str, payload: dict) -> dict:
@@ -80,14 +94,19 @@ class SelectRequest(BaseModel):
     offer_id: str = "offer-summarizer-basic"
     quantity: int = 1
     buyer_name: str = "Marketplace User"
+    # Optional overrides — used after a federated discover to pick a specific BPP.
+    bpp_id: Optional[str] = None
+    bpp_uri: Optional[str] = None
 
 
 @router.post("/contracts/select")
 async def select(req: SelectRequest):
     """Start a new transaction: select an agent."""
     txn_id = req.transaction_id or str(uuid.uuid4())
-    ctx = _build_context("select", txn_id)
+    ctx = _build_context("select", txn_id, req.bpp_id, req.bpp_uri)
     ctx["schemaContext"] = []
+    # Remember which BPP this txn targets so init/confirm/status reuse it.
+    set_transaction_target(txn_id, ctx["bppId"], ctx["bppUri"])
 
     payload = {
         "context": ctx,
@@ -118,6 +137,16 @@ async def select(req: SelectRequest):
 
 class TxnRequest(BaseModel):
     transaction_id: str
+    bpp_id: Optional[str] = None
+    bpp_uri: Optional[str] = None
+
+
+class ConfirmRequest(TxnRequest):
+    # Optional agent input passed through to the BPP; embedded in the
+    # commitment's performanceAttributes so the orchestrator can dispatch
+    # it to the agent's /task endpoint.
+    agent_id: Optional[str] = None
+    agent_input: Optional[dict] = None
 
 
 @router.post("/contracts/init")
@@ -125,7 +154,8 @@ async def init(req: TxnRequest):
     """Continue transaction: provide fulfillment details.
     Uses stored contract data from on_select callback."""
     contract = await get_transaction_contract(req.transaction_id)
-    ctx = _build_context("init", req.transaction_id)
+    bpp_id, bpp_uri = _resolve_bpp_target(req.bpp_id, req.bpp_uri, req.transaction_id)
+    ctx = _build_context("init", req.transaction_id, bpp_id, bpp_uri)
 
     # Use commitments and participants from on_select if available
     commitments = contract.get("commitments", [])
@@ -171,11 +201,12 @@ async def init(req: TxnRequest):
 
 
 @router.post("/contracts/confirm")
-async def confirm(req: TxnRequest):
+async def confirm(req: ConfirmRequest):
     """Confirm the transaction: trigger agent execution.
     Uses stored contract data from on_select/on_init callbacks."""
     contract = await get_transaction_contract(req.transaction_id)
-    ctx = _build_context("confirm", req.transaction_id)
+    bpp_id, bpp_uri = _resolve_bpp_target(req.bpp_id, req.bpp_uri, req.transaction_id)
+    ctx = _build_context("confirm", req.transaction_id, bpp_id, bpp_uri)
 
     contract_id = contract.get("id", f"contract-{req.transaction_id[:8]}")
     commitments = contract.get("commitments", [])
@@ -200,6 +231,12 @@ async def confirm(req: TxnRequest):
             status = ic.get("status", {})
             if isinstance(status, dict) and "code" in status and "descriptor" not in status:
                 ic["status"] = {"descriptor": {"code": status["code"]}}
+            # Embed agent_input where the BPP/orchestrator expects to read it.
+            if req.agent_input:
+                ic["performanceAttributes"] = {
+                    **(ic.get("performanceAttributes") or {}),
+                    **req.agent_input,
+                }
             confirm_commitments.append(ic)
         commitments = confirm_commitments
 
@@ -232,7 +269,8 @@ async def confirm(req: TxnRequest):
 async def status(req: TxnRequest):
     """Check execution status. Uses stored commitments."""
     contract = await get_transaction_contract(req.transaction_id)
-    ctx = _build_context("status", req.transaction_id)
+    bpp_id, bpp_uri = _resolve_bpp_target(req.bpp_id, req.bpp_uri, req.transaction_id)
+    ctx = _build_context("status", req.transaction_id, bpp_id, bpp_uri)
 
     commitments = contract.get("commitments", [])
     if not commitments:
@@ -312,7 +350,8 @@ async def discover(req: DiscoverRequest):
 async def cancel(req: TxnRequest):
     """Cancel an active transaction."""
     contract = await get_transaction_contract(req.transaction_id)
-    ctx = _build_context("cancel", req.transaction_id)
+    bpp_id, bpp_uri = _resolve_bpp_target(req.bpp_id, req.bpp_uri, req.transaction_id)
+    ctx = _build_context("cancel", req.transaction_id, bpp_id, bpp_uri)
 
     commitments = contract.get("commitments", [])
     if not commitments:
