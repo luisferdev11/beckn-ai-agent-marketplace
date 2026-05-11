@@ -23,6 +23,19 @@ async def store_callback(context: dict, message: dict):
     await db.store_callback(context, message)
 
 
+async def create_draft_contract(
+    txn_id: str,
+    contract_code: str,
+    commitments: list | None = None,
+    participants: list | None = None,
+) -> bool:
+    return await db.create_draft_contract(txn_id, contract_code, commitments, participants)
+
+
+async def contract_exists(txn_id: str) -> bool:
+    return await db.contract_exists(txn_id)
+
+
 async def get_all_callbacks() -> list[dict]:
     return await db.get_all_callbacks()
 
