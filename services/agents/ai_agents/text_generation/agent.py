@@ -5,7 +5,8 @@ from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 
 if not os.environ.get("GROQ_API_KEY"):
-    raise RuntimeError("GROQ_API_KEY environment variable is not set")
+    import warnings
+    warnings.warn("GROQ_API_KEY not set; agents without per-request keys will fail")
 
 MODEL_NAME = "llama-3.3-70b-versatile"
 
@@ -27,15 +28,16 @@ _prompt = ChatPromptTemplate.from_messages([
 ])
 
 
-def _get_llm() -> ChatGroq:
+def _get_llm(api_key: str | None = None) -> ChatGroq:
+    key = api_key or os.environ.get("GROQ_API_KEY")
     return ChatGroq(
-        api_key=os.environ.get("GROQ_API_KEY"),
+        api_key=key,
         model_name=MODEL_NAME,
         temperature=0.7,
     )
 
 
-async def run_task(payload: dict) -> tuple:
+async def run_task(payload: dict, credentials: dict | None = None) -> tuple:
     """Run a text generation task. Returns (result, usage)."""
     _metrics["total_requests"] += 1
 
@@ -44,7 +46,8 @@ async def run_task(payload: dict) -> tuple:
         _metrics["failed_requests"] += 1
         raise ValueError("No prompt provided. Send {\"prompt\": \"your question\"}")
 
-    chain = _prompt | _get_llm()
+    api_key = credentials.get("api_key") if credentials else None
+    chain = _prompt | _get_llm(api_key=api_key)
 
     try:
         response = await chain.ainvoke({"prompt": prompt})

@@ -61,10 +61,11 @@ _DEFAULT_HANDLER = run_text_generation
 async def execute_task(body: dict, agent_id: str = ""):
     start_time = time.time()
 
+    credentials = body.pop("_credentials", None)
     handler = _HANDLERS.get(agent_id, _DEFAULT_HANDLER)
 
     try:
-        result, usage = await handler(body)
+        result, usage = await handler(body, credentials=credentials)
         return TaskResponse(
             status="success", result=result,
             usage=UsageModel(latency_ms=int((time.time() - start_time) * 1000), **usage),

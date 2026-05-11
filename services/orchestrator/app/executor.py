@@ -74,7 +74,7 @@ async def dispatch(record: ExecutionRecord, request: ExecuteRequest) -> None:
     store_update(execution_id, status=ExecutionStatus.RUNNING, started_at=time.time())
     logger.info("[%s] Dispatching to %s at %s", execution_id, record.agent_id, record.agent_url)
 
-    response = await _call_agent(record.agent_url, record.agent_id, request.input, record.timeout_ms)
+    response = await _call_agent(record.agent_url, record.agent_id, request.input, record.timeout_ms, credentials=record.credentials)
 
     if response.status == "success":
         if request.output_schema and response.result is not None:
@@ -108,10 +108,14 @@ async def dispatch(record: ExecutionRecord, request: ExecuteRequest) -> None:
         )
 
 
-async def _call_agent(base_url: str, agent_id: str, payload: dict, timeout_ms: int) -> TaskResponse:
+async def _call_agent(base_url: str, agent_id: str, payload: dict, timeout_ms: int, credentials: dict | None = None) -> TaskResponse:
     """POST {base_url}/task with flat payload. Always returns a TaskResponse — never raises."""
     timeout_s = max(timeout_ms / 1000, 1.0)
     empty_usage = UsageModel(model_used="", input_tokens=0, output_tokens=0, latency_ms=0)
+
+    # Inject credentials into payload for internal agents service
+    if credentials:
+        payload = {**payload, "_credentials": credentials}
 
     try:
         async with httpx.AsyncClient(timeout=timeout_s) as client:

@@ -97,7 +97,7 @@ export default function ResultPage({ params }: ResultPageProps) {
           maxWidth: 960, margin: '0 auto', padding: '0 32px',
           height: 58, display: 'flex', alignItems: 'center', gap: 16,
         }}>
-          <Link href="/search" style={{
+          <Link href="/dashboard" style={{
             fontSize: 13, color: 'var(--text-secondary)', fontFamily: 'var(--font-plex)',
             textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 6,
             fontWeight: 500,
@@ -337,7 +337,7 @@ export default function ResultPage({ params }: ResultPageProps) {
         {completed && (
           <div style={{ marginTop: 40 }}>
             <Link
-              href="/search"
+              href="/dashboard"
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 6,
                 padding: '11px 22px', background: 'white',

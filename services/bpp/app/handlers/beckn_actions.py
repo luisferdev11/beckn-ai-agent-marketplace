@@ -263,9 +263,17 @@ async def _dispatch_to_orchestrator(txn_id: str, stored: dict) -> None:
     sla = {}
 
     agent = await repo.get_agent_by_beckn_id(agent_beckn_id)
+    credentials = {}
     if agent:
         sla = _parse_jsonb(agent.get("sla", {}))
         agent_url = agent.get("access_point_url") or agent_url
+        raw_creds = _parse_jsonb(agent.get("credentials", {}))
+        if raw_creds.get("api_key"):
+            try:
+                from app.crypto import decrypt
+                credentials = {"api_key": decrypt(raw_creds["api_key"])}
+            except Exception as exc:
+                logger.warning("dispatch: failed to decrypt credentials for %s: %s", agent_beckn_id, exc)
 
     # Extract prompt from multiple possible locations in the commitment
     agent_input = commitments[0].get("performanceAttributes", {}) or {}
@@ -279,13 +287,16 @@ async def _dispatch_to_orchestrator(txn_id: str, stored: dict) -> None:
     timeout_ms = int(sla.get("maxLatencyMs", 30000))
 
     try:
-        ack = await orchestrator_client.start_execution({
+        payload: dict = {
             "contract_id": stored["contract_code"],
             "agent_id": agent_beckn_id,
             "agent_url": agent_url,
             "input": agent_input,
             "timeout_ms": timeout_ms,
-        })
+        }
+        if credentials:
+            payload["credentials"] = credentials
+        ack = await orchestrator_client.start_execution(payload)
         execution_id = ack.get("execution_id")
         await repo.update_contract(txn_id, execution_id=execution_id)
         logger.info("dispatch: txn %s → execution %s", txn_id[:8], execution_id)
