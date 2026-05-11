@@ -91,6 +91,28 @@ class TestSelectPayloadSentToONIX:
         assert payload["context"]["transactionId"] == given_txn
 
 
+class TestSelectCreatesDraftContract:
+    """Issue #12: select must materialize the contract row in DRAFT before
+    talking to ONIX, so subsequent init/confirm/status calls can succeed and
+    orphan callbacks have nothing to attach to."""
+
+    async def test_select_creates_draft_row(self, client, mock_onix, fake_db):
+        txn_id = "txn-draft-001"
+        await client.post("/api/contracts/select", json={"transaction_id": txn_id})
+        assert txn_id in fake_db["contracts"]
+        assert fake_db["contracts"][txn_id]["status"] == "DRAFT"
+
+    async def test_select_is_idempotent(self, client, mock_onix, fake_db):
+        """Calling select twice with the same txn id must not error or
+        duplicate the row (ON CONFLICT DO NOTHING)."""
+        txn_id = "txn-draft-002"
+        r1 = await client.post("/api/contracts/select", json={"transaction_id": txn_id})
+        r2 = await client.post("/api/contracts/select", json={"transaction_id": txn_id})
+        assert r1.status_code == 200
+        assert r2.status_code == 200
+        assert len([k for k in fake_db["contracts"] if k == txn_id]) == 1
+
+
 class TestSelectErrorScenarios:
     async def test_empty_payload_uses_defaults(self, client, mock_onix):
         response = await client.post("/api/contracts/select", json={})

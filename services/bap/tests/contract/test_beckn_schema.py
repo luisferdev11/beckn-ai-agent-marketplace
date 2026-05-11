@@ -128,20 +128,26 @@ class TestOnStatusSchema:
 
 
 class TestCallbackStorageComplianceWithSpec:
-    """After storing callbacks, the accumulated contract must still be spec-compliant."""
+    """After storing callbacks, the accumulated contract must still be spec-compliant.
 
-    def test_stored_on_select_preserves_consideration(self):
+    Each test pre-creates a DRAFT contract (as /select would) before
+    feeding callbacks — issue #12 means orphan callbacks are dropped.
+    """
+
+    async def test_stored_on_select_preserves_consideration(self, fake_db):
+        await bap_store.create_draft_contract("txn-schema-001", "contract-schema-001")
         cb = make_on_select_callback("txn-schema-001")
-        bap_store.store_callback(cb["context"], cb["message"])
-        contract = bap_store.get_transaction_contract("txn-schema-001")
+        await bap_store.store_callback(cb["context"], cb["message"])
+        contract = await bap_store.get_transaction_contract("txn-schema-001")
         assert "consideration" in contract
         assert contract["consideration"][0]["price"]["currency"] == "INR"
 
-    def test_stored_on_status_preserves_performance_attributes(self):
-        bap_store.store_callback(
+    async def test_stored_on_status_preserves_performance_attributes(self, fake_db):
+        await bap_store.create_draft_contract("txn-schema-002", "contract-schema-002")
+        await bap_store.store_callback(
             make_context("on_confirm", txn_id="txn-schema-002"), {"contract": {}}
         )
         cb = make_on_status_completed_callback("txn-schema-002")
-        bap_store.store_callback(cb["context"], cb["message"])
-        contract = bap_store.get_transaction_contract("txn-schema-002")
+        await bap_store.store_callback(cb["context"], cb["message"])
+        contract = await bap_store.get_transaction_contract("txn-schema-002")
         assert "@context" in contract["performance"][0]["performanceAttributes"]
