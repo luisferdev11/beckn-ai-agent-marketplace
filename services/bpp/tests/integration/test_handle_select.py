@@ -40,63 +40,53 @@ class TestWebhookSelectACK:
 
 
 class TestSelectContractCreation:
-    async def test_contract_created_in_store(self, client, mock_onix_bpp):
-        from app.handlers import beckn_actions
+    async def test_contract_created_in_store(self, client, mock_onix_bpp, fake_db):
         txn_id = "txn-bpp-select-001"
         body = {
             "context": make_beckn_context("select", txn_id=txn_id),
             "message": make_select_contract_message(txn_id=txn_id),
         }
         await client.post("/api/webhook/select", json=body)
-        contract_id = f"contract-{txn_id[:8]}"
-        assert contract_id in beckn_actions._contracts
+        assert txn_id in fake_db["contracts"]
 
-    async def test_stored_contract_has_transaction_id(self, client, mock_onix_bpp):
-        from app.handlers import beckn_actions
+    async def test_stored_contract_has_transaction_id(self, client, mock_onix_bpp, fake_db):
         txn_id = "txn-bpp-select-002"
         body = {
             "context": make_beckn_context("select", txn_id=txn_id),
             "message": make_select_contract_message(txn_id=txn_id),
         }
         await client.post("/api/webhook/select", json=body)
-        contract_id = f"contract-{txn_id[:8]}"
-        stored = beckn_actions._contracts[contract_id]
-        assert stored["transactionId"] == txn_id
+        stored = fake_db["contracts"][txn_id]
+        assert stored["transaction_id"] == txn_id
 
-    async def test_stored_contract_status_is_draft(self, client, mock_onix_bpp):
-        from app.handlers import beckn_actions
+    async def test_stored_contract_status_is_draft(self, client, mock_onix_bpp, fake_db):
         txn_id = "txn-bpp-select-003"
         body = {
             "context": make_beckn_context("select", txn_id=txn_id),
             "message": make_select_contract_message(txn_id=txn_id),
         }
         await client.post("/api/webhook/select", json=body)
-        contract_id = f"contract-{txn_id[:8]}"
-        assert beckn_actions._contracts[contract_id]["status"] == "DRAFT"
+        assert fake_db["contracts"][txn_id]["status"] == "DRAFT"
 
 
 class TestSelectPricingViaWebhook:
-    async def test_summarizer_consideration_in_stored_contract(self, client, mock_onix_bpp):
-        from app.handlers import beckn_actions
+    async def test_summarizer_consideration_in_stored_contract(self, client, mock_onix_bpp, fake_db):
         txn_id = "txn-bpp-price-001"
         body = {
             "context": make_beckn_context("select", txn_id=txn_id),
             "message": make_select_contract_message("agent-summarizer-001", txn_id=txn_id),
         }
         await client.post("/api/webhook/select", json=body)
-        contract_id = f"contract-{txn_id[:8]}"
-        consideration = beckn_actions._contracts[contract_id]["consideration"]
+        consideration = fake_db["contracts"][txn_id]["consideration"]
         assert len(consideration) > 0
         assert consideration[0]["price"]["value"] == "7.08"
 
-    async def test_code_reviewer_consideration_in_stored_contract(self, client, mock_onix_bpp):
-        from app.handlers import beckn_actions
+    async def test_code_reviewer_consideration_in_stored_contract(self, client, mock_onix_bpp, fake_db):
         txn_id = "txn-bpp-price-002"
         body = {
             "context": make_beckn_context("select", txn_id=txn_id),
             "message": make_select_contract_message("agent-code-reviewer-001", txn_id=txn_id),
         }
         await client.post("/api/webhook/select", json=body)
-        contract_id = f"contract-{txn_id[:8]}"
-        consideration = beckn_actions._contracts[contract_id]["consideration"]
+        consideration = fake_db["contracts"][txn_id]["consideration"]
         assert consideration[0]["price"]["value"] == "11.80"
