@@ -162,3 +162,63 @@ class TestFullFlow:
                     return
 
         pytest.fail("Execution never completed within 30 seconds")
+
+
+class TestBPPRejectsUnknownTransaction:
+    """Issue #14 — BPP-tecla must reject init/confirm/status/cancel for txns
+    it never ack'd via select. We bypass the BAP guard (PR #18 already blocks
+    unknown txns there) by POSTing directly to the BPP webhook, simulating
+    ONIX-BPP delivering a misrouted request."""
+
+    @staticmethod
+    def _envelope(action: str, txn_id: str) -> dict:
+        return {
+            "context": {
+                "networkId": "beckn.one/testnet",
+                "version": "2.0.0",
+                "action": action,
+                "bapId": "bap.example.com",
+                "bapUri": "http://onix-bap:8081/bap/receiver",
+                "bppId": "bpp.example.com",
+                "bppUri": "http://onix-bpp:8082/bpp/receiver",
+                "transactionId": txn_id,
+                "messageId": f"msg-{txn_id}",
+                "timestamp": "2026-05-12T00:00:00.000Z",
+                "ttl": "PT30S",
+            },
+            "message": {"contract": {"id": f"contract-{txn_id[:8]}"}},
+        }
+
+    def _wait_for_callback(self, http, txn_id: str, action: str, timeout: int = 8):
+        start = time.time()
+        while time.time() - start < timeout:
+            callbacks = http.get(f"{BAP_URL}/api/callbacks").json()
+            for cb in callbacks:
+                ctx = cb.get("context", {})
+                if ctx.get("transactionId") == txn_id and ctx.get("action") == f"on_{action}":
+                    return cb
+            time.sleep(0.5)
+        return None
+
+    @pytest.mark.parametrize("action", ["init", "confirm", "status", "cancel"])
+    def test_unknown_txn_returns_error_30002(self, http, action):
+        txn_id = f"e2e-unknown-{action}-{int(time.time() * 1000)}"
+
+        # 1. POST directly to BPP webhook with a never-acknowledged txn.
+        r = http.post(f"{BPP_URL}/api/webhook/{action}", json=self._envelope(action, txn_id))
+        assert r.status_code == 200
+        assert r.json()["message"]["ack"]["status"] == "ACK"
+
+        # 2. BPP fires on_<action> via ONIX; wait for the BAP to record it.
+        cb = self._wait_for_callback(http, txn_id, action)
+        assert cb is not None, f"on_{action} callback never reached the BAP"
+
+        # 3. Beckn v2 error envelope must carry code 30002.
+        err = cb["message"].get("_error")
+        assert err is not None, f"on_{action} arrived without error field — phantom success"
+        assert err["code"] == "30002", f"unexpected error code: {err}"
+
+        # 4. No phantom contract data echoed back.
+        assert "contract" not in cb["message"], (
+            f"on_{action} error envelope must not echo contract data"
+        )

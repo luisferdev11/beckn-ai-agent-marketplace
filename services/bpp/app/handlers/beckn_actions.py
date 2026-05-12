@@ -42,6 +42,31 @@ def build_response_context(incoming_context: dict, action: str) -> dict:
     return ctx
 
 
+# Beckn v2 error code for missing transactional continuity.
+# Returned by on_init/on_confirm/on_status/on_cancel when the txn was never
+# acknowledged on this BPP (no prior on_select stored). See issue #14.
+TXN_NOT_FOUND_CODE = "30002"
+TXN_NOT_FOUND_MESSAGE = "Transaction not found"
+
+
+def _txn_not_found_response(context: dict, action: str) -> dict:
+    """
+    Build an on_<action> envelope that signals the txn is unknown to this BPP.
+
+    The envelope keeps a valid Beckn context (with the action flipped to on_*)
+    and adds a top-level `error` field per Beckn v2. No `message` is included
+    because there is no contract state to echo back — this protects against
+    phantom-row writes from cross-BPP misrouting.
+    """
+    return {
+        "context": build_response_context(context, action),
+        "error": {
+            "code": TXN_NOT_FOUND_CODE,
+            "message": TXN_NOT_FOUND_MESSAGE,
+        },
+    }
+
+
 def _parse_jsonb(val):
     """Safely parse a JSONB value that might be a string or already a dict/list."""
     if isinstance(val, str):
@@ -190,32 +215,32 @@ async def handle_init(context: dict, message: dict) -> dict:
     txn_id = context["transactionId"]
 
     stored = await repo.get_contract_by_txn(txn_id)
+    if not stored:
+        logger.warning(f"init: txn unknown to this BPP, rejecting [txn={txn_id[:8]}]")
+        return _txn_not_found_response(context, "init")
 
     performance = contract.get("performance", [{"id": "perf-001"}])
     settlements = contract.get("settlements", [{"id": "settlement-001", "status": "DRAFT"}])
 
-    if stored:
-        await repo.update_contract(txn_id,
-            performance=performance,
-            settlements=settlements,
-            initialized_at=datetime.now(timezone.utc),
-        )
-        logger.info(f"init: contract updated with performance/settlements [txn={txn_id[:8]}]")
+    await repo.update_contract(txn_id,
+        performance=performance,
+        settlements=settlements,
+        initialized_at=datetime.now(timezone.utc),
+    )
+    logger.info(f"init: contract updated with performance/settlements [txn={txn_id[:8]}]")
 
-    stored_commitments = _parse_jsonb(stored["commitments"]) if stored else []
-    stored_participants = _parse_jsonb(stored["participants"]) if stored else []
-    stored_consideration = _parse_jsonb(stored["consideration"]) if stored else []
+    stored_commitments = _parse_jsonb(stored["commitments"])
+    stored_participants = _parse_jsonb(stored["participants"])
+    stored_consideration = _parse_jsonb(stored["consideration"])
 
     response_contract = {
+        "id": stored["contract_code"],
         "commitments": contract.get("commitments", stored_commitments),
         "participants": contract.get("participants", stored_participants),
+        "consideration": stored_consideration,
         "performance": performance,
         "settlements": settlements,
     }
-
-    if stored:
-        response_contract["id"] = stored["contract_code"]
-        response_contract["consideration"] = stored_consideration
 
     return {
         "context": build_response_context(context, "init"),
@@ -229,27 +254,29 @@ async def handle_confirm(context: dict, message: dict) -> dict:
     txn_id = context["transactionId"]
 
     stored = await repo.get_contract_by_txn(txn_id)
+    if not stored:
+        logger.warning(f"confirm: txn unknown to this BPP, rejecting [txn={txn_id[:8]}]")
+        return _txn_not_found_response(context, "confirm")
 
     # Update contract with confirm data (commitments may contain the prompt)
     confirm_commitments = contract.get("commitments", [])
-    if stored:
-        updates = {
-            "status": "ACTIVE",
-            "confirmed_at": datetime.now(timezone.utc),
-        }
-        if confirm_commitments:
-            updates["commitments"] = confirm_commitments
-        await repo.update_contract(txn_id, **updates)
-        # Re-read stored to get updated commitments
-        stored = await repo.get_contract_by_txn(txn_id)
-        logger.info(f"confirm: contract ACTIVE [txn={txn_id[:8]}]")
-        asyncio.create_task(_dispatch_to_orchestrator(txn_id, stored))
+    updates = {
+        "status": "ACTIVE",
+        "confirmed_at": datetime.now(timezone.utc),
+    }
+    if confirm_commitments:
+        updates["commitments"] = confirm_commitments
+    await repo.update_contract(txn_id, **updates)
+    # Re-read stored to get updated commitments
+    stored = await repo.get_contract_by_txn(txn_id)
+    logger.info(f"confirm: contract ACTIVE [txn={txn_id[:8]}]")
+    asyncio.create_task(_dispatch_to_orchestrator(txn_id, stored))
 
     response_contract = {
-        "id": contract.get("id", stored["contract_code"] if stored else "unknown"),
+        "id": contract.get("id", stored["contract_code"]),
         "commitments": contract.get("commitments", []),
         "participants": contract.get("participants", []),
-        "performance": contract.get("performance", _parse_jsonb(stored["performance"]) if stored else []),
+        "performance": contract.get("performance", _parse_jsonb(stored["performance"])),
         "settlements": contract.get("settlements", []),
     }
 
@@ -310,13 +337,16 @@ async def handle_status(context: dict, message: dict) -> dict:
     txn_id = context["transactionId"]
 
     stored = await repo.get_contract_by_txn(txn_id)
+    if not stored:
+        logger.warning(f"status: txn unknown to this BPP, rejecting [txn={txn_id[:8]}]")
+        return _txn_not_found_response(context, "status")
 
     exec_status = "PENDING"
     short_desc = "Execution pending"
     result: dict = {}
     metadata: dict = {}
 
-    execution_id = stored.get("execution_id") if stored else None
+    execution_id = stored.get("execution_id")
     if execution_id:
         try:
             exec_data = await orchestrator_client.get_execution(execution_id)
@@ -360,7 +390,7 @@ async def handle_status(context: dict, message: dict) -> dict:
         },
     }]
 
-    stored_commitments = _parse_jsonb(stored["commitments"]) if stored else []
+    stored_commitments = _parse_jsonb(stored["commitments"])
     commitments = stored_commitments or contract.get("commitments", [])
     if not commitments:
         commitments = [{"id": "commitment-001", "status": {"code": "ACTIVE"},
@@ -372,7 +402,7 @@ async def handle_status(context: dict, message: dict) -> dict:
         "context": build_response_context(context, "status"),
         "message": {
             "contract": {
-                "id": contract.get("id", stored["contract_code"] if stored else "unknown"),
+                "id": contract.get("id", stored["contract_code"]),
                 "commitments": commitments,
                 "performance": performance,
             }
@@ -383,6 +413,12 @@ async def handle_status(context: dict, message: dict) -> dict:
 async def handle_cancel(context: dict, message: dict) -> dict:
     txn_id = context["transactionId"]
     contract = message.get("contract", {})
+
+    stored = await repo.get_contract_by_txn(txn_id)
+    if not stored:
+        logger.warning(f"cancel: txn unknown to this BPP, rejecting [txn={txn_id[:8]}]")
+        return _txn_not_found_response(context, "cancel")
+
     await repo.update_contract(txn_id, status="CANCELLED")
     return {
         "context": build_response_context(context, "cancel"),
