@@ -38,6 +38,21 @@ def _parse_jsonb(val):
     return val
 
 
+def _extract_agent_name(agent_name) -> str:
+    """Extract a display name from agent_name which can be a dict, JSON string, or plain string."""
+    if isinstance(agent_name, dict):
+        return agent_name.get("en", next(iter(agent_name.values()), "Agent"))
+    if isinstance(agent_name, str):
+        try:
+            parsed = json.loads(agent_name)
+            if isinstance(parsed, dict):
+                return parsed.get("en", next(iter(parsed.values()), "Agent"))
+            return str(parsed)
+        except (json.JSONDecodeError, ValueError):
+            return agent_name
+    return "Agent"
+
+
 async def handle_discover(context: dict, message: dict) -> dict:
     """
     Handle discover: search agents by keywords from the intent.
@@ -82,7 +97,7 @@ async def handle_discover(context: dict, message: dict) -> dict:
             {
                 "id": f"offer-agent-{a['id']}",
                 "descriptor": {
-                    "name": (json.loads(a['agent_name']) if isinstance(a['agent_name'], str) else a['agent_name']).get('en', 'Agent'),
+                    "name": _extract_agent_name(a['agent_name']),
                 },
                 "resourceIds": [a["beckn_id"] or str(a["id"])],
             }
@@ -232,7 +247,9 @@ async def handle_confirm(context: dict, message: dict) -> dict:
         # Re-read stored to get updated commitments
         stored = await repo.get_contract_by_txn(txn_id)
         logger.info(f"confirm: contract ACTIVE [txn={txn_id[:8]}]")
-        asyncio.create_task(_dispatch_to_orchestrator(txn_id, stored))
+        # Register execution_id synchronously so status polls can find it,
+        # but the actual agent execution runs in the background.
+        await _register_execution(txn_id, stored)
 
     response_contract = {
         "id": contract.get("id", stored["contract_code"] if stored else "unknown"),
@@ -248,8 +265,9 @@ async def handle_confirm(context: dict, message: dict) -> dict:
     }
 
 
-async def _dispatch_to_orchestrator(txn_id: str, stored: dict) -> None:
-    """Fire-and-forget: call orchestrator /execute and store execution_id."""
+async def _register_execution(txn_id: str, stored: dict) -> None:
+    """Register execution with orchestrator (awaited) so execution_id is stored
+    before handle_confirm returns.  The orchestrator runs the agent in the background."""
     commitments = _parse_jsonb(stored.get("commitments", []))
     if not commitments:
         return
@@ -271,9 +289,19 @@ async def _dispatch_to_orchestrator(txn_id: str, stored: dict) -> None:
         if raw_creds.get("api_key"):
             try:
                 from app.crypto import decrypt
-                credentials = {"api_key": decrypt(raw_creds["api_key"])}
+                credentials["api_key"] = decrypt(raw_creds["api_key"])
             except Exception as exc:
                 logger.warning("dispatch: failed to decrypt credentials for %s: %s", agent_beckn_id, exc)
+
+        # Pass LLM config so the agents service knows which provider/model to use
+        if agent.get("llm_provider"):
+            credentials["llm_provider"] = agent["llm_provider"]
+        if agent.get("llm_model"):
+            credentials["llm_model"] = agent["llm_model"]
+        if agent.get("system_prompt"):
+            credentials["system_prompt"] = agent["system_prompt"]
+        if agent.get("temperature") is not None:
+            credentials["temperature"] = float(agent["temperature"])
 
     # Extract prompt from multiple possible locations in the commitment
     agent_input = commitments[0].get("performanceAttributes", {}) or {}
@@ -284,7 +312,7 @@ async def _dispatch_to_orchestrator(txn_id: str, stored: dict) -> None:
         if prompt_text:
             agent_input = {"prompt": prompt_text}
 
-    timeout_ms = int(sla.get("maxLatencyMs", 30000))
+    timeout_ms = int(sla.get("maxLatencyMs", 120000))
 
     try:
         payload: dict = {
@@ -296,6 +324,8 @@ async def _dispatch_to_orchestrator(txn_id: str, stored: dict) -> None:
         }
         if credentials:
             payload["credentials"] = credentials
+        # This call returns as soon as the orchestrator ACKs and stores the execution_id.
+        # The orchestrator then runs dispatch() in the background.
         ack = await orchestrator_client.start_execution(payload)
         execution_id = ack.get("execution_id")
         await repo.update_contract(txn_id, execution_id=execution_id)

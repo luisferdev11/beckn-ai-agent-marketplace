@@ -25,7 +25,7 @@ class ExecuteRequest(BaseModel):
     input_schema: Optional[dict] = None
     output_schema: Optional[dict] = None
     timeout_ms: int = 30000
-    credentials: Optional[dict[str, str]] = None
+    credentials: Optional[dict[str, Any]] = None
 
 
 class ExecuteAck(BaseModel):

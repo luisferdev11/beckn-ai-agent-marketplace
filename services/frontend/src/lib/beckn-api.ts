@@ -119,13 +119,15 @@ async function pollCallback(
   expectedAction: string,
   maxWaitMs = 30_000,
   intervalMs = 1_000,
-): Promise<{ context: Record<string, unknown>; message: Record<string, unknown> }> {
+  afterId = 0,
+): Promise<{ id: number; context: Record<string, unknown>; message: Record<string, unknown> }> {
   const deadline = Date.now() + maxWaitMs;
   while (Date.now() < deadline) {
     const res = await fetch(`${API}/callbacks/ultimo?transaction_id=${txnId}`);
     const data: RawCallback = await res.json();
-    if (data.action === expectedAction) {
+    if (data.action === expectedAction && data.id > afterId) {
       return {
+        id: data.id,
         context: parseJson(data.context),
         message: parseJson(data.message),
       };
@@ -237,13 +239,18 @@ export async function confirmTransaction(txnId: string, prompt?: string): Promis
   return (cb.message as { contract?: ContractData }).contract ?? {};
 }
 
+// Track the last seen on_status callback ID so subsequent calls wait for a FRESH callback
+const _lastStatusId: Record<string, number> = {};
+
 export async function pollStatus(txnId: string): Promise<ContractData> {
+  const afterId = _lastStatusId[txnId] || 0;
   await fetch(`${API}/contracts/status`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ transaction_id: txnId }),
   });
-  const cb = await pollCallback(txnId, 'on_status', 60_000);
+  const cb = await pollCallback(txnId, 'on_status', 30_000, 1_000, afterId);
+  _lastStatusId[txnId] = cb.id;
   return (cb.message as { contract?: ContractData }).contract ?? {};
 }
 

@@ -22,9 +22,9 @@ export function SessionDropdown({ email, role, companyName }: Props) {
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
-  function logout() {
+  async function logout() {
     localStorage.removeItem('token');
-    document.cookie = 'token=; path=/; max-age=0';
+    await fetch('/api/auth/logout', { method: 'POST' });
     router.push('/login');
   }
 

@@ -15,6 +15,16 @@ interface Category {
   display_name: { en?: string };
 }
 
+const LLM_PROVIDERS = [
+  { value: 'groq', label: 'Groq', hint: 'llama-3.3-70b-versatile, mixtral-8x7b-32768' },
+  { value: 'openai', label: 'OpenAI', hint: 'gpt-4o, gpt-4o-mini' },
+  { value: 'anthropic', label: 'Anthropic', hint: 'claude-sonnet-4-20250514, claude-haiku-4-5-20251001' },
+  { value: 'gemini', label: 'Google Gemini', hint: 'gemini-1.5-flash, gemini-1.5-pro, gemini-2.0-flash' },
+  { value: 'mistral', label: 'Mistral', hint: 'mistral-large-latest, mistral-small-latest' },
+  { value: 'together_ai', label: 'Together AI', hint: 'meta-llama/Llama-3-70b' },
+  { value: 'deepseek', label: 'DeepSeek', hint: 'deepseek-chat, deepseek-reasoner' },
+];
+
 export function RegisterAgentForm({ token, integrationMode, onSuccess, onCancel }: Props) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -23,6 +33,10 @@ export function RegisterAgentForm({ token, integrationMode, onSuccess, onCancel 
   const [pricingValue, setPricingValue] = useState('');
   const [endpoint, setEndpoint] = useState(integrationMode === 'managed' ? 'http://agents:3004' : '');
   const [apiKey, setApiKey] = useState('');
+  const [llmProvider, setLlmProvider] = useState('groq');
+  const [llmModel, setLlmModel] = useState('');
+  const [systemPrompt, setSystemPrompt] = useState('');
+  const [temperature, setTemperature] = useState('0.7');
   const [status, setStatus] = useState('active');
   const [categories, setCategories] = useState<Category[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -35,12 +49,18 @@ export function RegisterAgentForm({ token, integrationMode, onSuccess, onCancel 
       .catch(() => {});
   }, []);
 
+  const selectedProvider = LLM_PROVIDERS.find(p => p.value === llmProvider);
+
   async function handleSubmit() {
     const e: Record<string, string> = {};
     if (!name.trim()) e.name = 'Name required';
     if (!categoryId) e.category = 'Category required';
     if (description.length > 160) e.description = 'Max 160 characters';
-    if (integrationMode === 'managed' && !apiKey.trim()) e.apiKey = 'API key required for managed agents';
+    if (integrationMode === 'managed') {
+      if (!apiKey.trim()) e.apiKey = 'API key required for managed agents';
+      if (!llmModel.trim()) e.llmModel = 'Model name required';
+      if (!systemPrompt.trim()) e.systemPrompt = 'System prompt required';
+    }
     if (integrationMode === 'external' && !endpoint.trim()) e.endpoint = 'Endpoint URL required for external agents';
     setErrors(e);
     if (Object.keys(e).length) return;
@@ -55,8 +75,12 @@ export function RegisterAgentForm({ token, integrationMode, onSuccess, onCancel 
       status,
     };
 
-    if (integrationMode === 'managed' && apiKey) {
+    if (integrationMode === 'managed') {
       body.api_key = apiKey;
+      body.llm_provider = llmProvider;
+      body.llm_model = llmModel;
+      body.system_prompt = systemPrompt;
+      body.temperature = parseFloat(temperature) || 0.7;
     }
 
     const res = await fetch('/api/publisher/agents', {
@@ -69,8 +93,12 @@ export function RegisterAgentForm({ token, integrationMode, onSuccess, onCancel 
     if (res.ok) {
       onSuccess();
     } else {
-      const data = await res.json();
-      setErrors({ submit: data.error || 'Failed to create agent' });
+      try {
+        const data = await res.json();
+        setErrors({ submit: data.error || 'Failed to create agent' });
+      } catch {
+        setErrors({ submit: `Server error (${res.status})` });
+      }
     }
   }
 
@@ -89,7 +117,7 @@ export function RegisterAgentForm({ token, integrationMode, onSuccess, onCancel 
       <div onClick={e => e.stopPropagation()} style={{
         background: 'var(--bg-surface)', borderRadius: 10,
         border: '1px solid var(--border-subtle)', padding: '28px',
-        width: '100%', maxWidth: 460, maxHeight: '90vh', overflowY: 'auto',
+        width: '100%', maxWidth: 520, maxHeight: '90vh', overflowY: 'auto',
         boxShadow: '0 8px 40px rgba(0,0,0,0.2)',
       }}>
         <h3 style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'var(--font-plex)', marginBottom: 4 }}>
@@ -145,18 +173,84 @@ export function RegisterAgentForm({ token, integrationMode, onSuccess, onCancel 
             </div>
           </div>
 
-          {/* Managed: API Key field */}
+          {/* Managed mode: LLM configuration */}
           {integrationMode === 'managed' && (
-            <div>
-              <label style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'var(--font-plex)', marginBottom: 4, display: 'block' }}>
-                LLM API Key <span style={{ color: 'var(--trust-low)' }}>*</span>
-              </label>
-              <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-... or gsk_..." style={inputStyle('apiKey')} />
-              {errors.apiKey && <span style={{ fontSize: 11, color: 'var(--trust-low)' }}>{errors.apiKey}</span>}
-              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4, fontFamily: 'var(--font-plex)' }}>
-                Your key is encrypted before storage and never shown again.
+            <>
+              <div style={{
+                borderTop: '1px solid var(--border-subtle)', paddingTop: 12, marginTop: 4,
+              }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'var(--font-plex)', marginBottom: 8 }}>
+                  LLM Configuration
+                </div>
               </div>
-            </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div>
+                  <label style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'var(--font-plex)', marginBottom: 4, display: 'block' }}>
+                    Provider <span style={{ color: 'var(--trust-low)' }}>*</span>
+                  </label>
+                  <select value={llmProvider} onChange={e => setLlmProvider(e.target.value)} style={{ ...inputStyle(''), cursor: 'pointer' }}>
+                    {LLM_PROVIDERS.map(p => (
+                      <option key={p.value} value={p.value}>{p.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'var(--font-plex)', marginBottom: 4, display: 'block' }}>
+                    Model <span style={{ color: 'var(--trust-low)' }}>*</span>
+                  </label>
+                  <input value={llmModel} onChange={e => setLlmModel(e.target.value)}
+                    placeholder={selectedProvider?.hint?.split(',')[0]?.trim() || 'model-name'}
+                    style={inputStyle('llmModel')} />
+                  {errors.llmModel && <span style={{ fontSize: 11, color: 'var(--trust-low)' }}>{errors.llmModel}</span>}
+                </div>
+              </div>
+              {selectedProvider?.hint && (
+                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', fontFamily: 'var(--font-mono)', marginTop: -4 }}>
+                  Available: {selectedProvider.hint}
+                </div>
+              )}
+
+              <div>
+                <label style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'var(--font-plex)', marginBottom: 4, display: 'block' }}>
+                  API Key <span style={{ color: 'var(--trust-low)' }}>*</span>
+                </label>
+                <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)}
+                  placeholder="sk-... or gsk_... or AIza..."
+                  style={inputStyle('apiKey')} />
+                {errors.apiKey && <span style={{ fontSize: 11, color: 'var(--trust-low)' }}>{errors.apiKey}</span>}
+                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4, fontFamily: 'var(--font-plex)' }}>
+                  Your key is encrypted before storage and never shown again.
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'var(--font-plex)', marginBottom: 4, display: 'block' }}>
+                  System Prompt <span style={{ color: 'var(--trust-low)' }}>*</span>
+                </label>
+                <textarea
+                  value={systemPrompt}
+                  onChange={e => setSystemPrompt(e.target.value)}
+                  placeholder="You are an expert at... Respond with..."
+                  rows={4}
+                  style={{
+                    ...inputStyle('systemPrompt'),
+                    resize: 'vertical', minHeight: 80,
+                  }}
+                />
+                {errors.systemPrompt && <span style={{ fontSize: 11, color: 'var(--trust-low)' }}>{errors.systemPrompt}</span>}
+                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4, fontFamily: 'var(--font-plex)' }}>
+                  Instructions that define your agent&apos;s behavior and personality.
+                </div>
+              </div>
+
+              <div style={{ maxWidth: 120 }}>
+                <label style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'var(--font-plex)', marginBottom: 4, display: 'block' }}>Temperature</label>
+                <input type="number" step="0.1" min="0" max="2" value={temperature}
+                  onChange={e => setTemperature(e.target.value)}
+                  style={inputStyle('')} />
+              </div>
+            </>
           )}
 
           {/* External: Endpoint URL field */}

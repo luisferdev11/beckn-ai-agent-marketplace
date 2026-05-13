@@ -2,28 +2,23 @@ import os
 import time
 from typing import Any, Optional
 
+import litellm
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-from ai_agents.code_review import (
-    check_model as check_code_review,
-    get_metrics as get_code_review_metrics,
-    run_task as run_code_review,
-)
-from ai_agents.text_generation import (
-    run_task as run_text_generation,
-)
-
 app = FastAPI(
     title="AI Agents Service",
-    version="1.0.0",
-    description="Individual AI agents for the Beckn marketplace",
+    version="2.0.0",
+    description="Generic LLM executor — any provider, configured from the DB",
 )
 
 START_TIME = time.time()
 
+# Suppress litellm's verbose logging unless DEBUG
+litellm.suppress_debug_info = True
 
-# ── Response envelope (flat result defined by each agent) ───────────────────
+
+# ── Response models ──────────────────────────────────────────────────────────
 
 class ErrorModel(BaseModel):
     code: str
@@ -44,51 +39,84 @@ class TaskResponse(BaseModel):
     usage: UsageModel
 
 
-# ── Agent dispatcher ─────────────────────────────────────────────────────────
-
-_HANDLERS = {
-    "agent-code-reviewer-001": run_code_review,
-    "agent-summarizer-001": run_code_review,
-    "agent-data-extractor-001": run_code_review,
-    "text-generator": run_text_generation,
-}
-
-# Fallback: any unknown agent_id uses text generation
-_DEFAULT_HANDLER = run_text_generation
-
+# ── Generic LLM executor ────────────────────────────────────────────────────
 
 @app.post("/task", response_model=TaskResponse, response_model_exclude_none=True)
 async def execute_task(body: dict, agent_id: str = ""):
-    start_time = time.time()
+    start_ms = time.time()
 
-    credentials = body.pop("_credentials", None)
-    handler = _HANDLERS.get(agent_id, _DEFAULT_HANDLER)
+    credentials = body.pop("_credentials", {}) or {}
 
-    try:
-        result, usage = await handler(body, credentials=credentials)
-        return TaskResponse(
-            status="success", result=result,
-            usage=UsageModel(latency_ms=int((time.time() - start_time) * 1000), **usage),
-        )
-    except Exception as exc:
+    # Extract prompt from multiple common field names
+    prompt = (
+        body.get("prompt")
+        or body.get("text")
+        or body.get("code")
+        or ""
+    )
+    if not prompt:
         return TaskResponse(
             status="error",
-            error=ErrorModel(code="EXCEPTION", message=str(exc)),
-            usage=UsageModel(model_used="", latency_ms=int((time.time() - start_time) * 1000)),
+            error=ErrorModel(code="NO_PROMPT", message='No prompt provided. Send {"prompt": "your question"}'),
+            usage=UsageModel(model_used="", latency_ms=0),
         )
+
+    # LLM config from credentials (injected by BPP from DB)
+    provider = credentials.get("llm_provider", "groq")
+    model = credentials.get("llm_model", "llama-3.3-70b-versatile")
+    api_key = credentials.get("api_key") or os.environ.get("GROQ_API_KEY")
+    system_prompt = credentials.get("system_prompt", "You are a helpful AI assistant.")
+    temperature = float(credentials.get("temperature", 0.7))
+
+    # litellm model format: "provider/model"
+    litellm_model = f"{provider}/{model}" if provider else model
+
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+
+    try:
+        response = await litellm.acompletion(
+            model=litellm_model,
+            messages=messages,
+            api_key=api_key,
+            temperature=temperature,
+        )
+    except Exception as exc:
+        latency = int((time.time() - start_ms) * 1000)
+        return TaskResponse(
+            status="error",
+            error=ErrorModel(code="LLM_ERROR", message=str(exc)),
+            usage=UsageModel(model_used=litellm_model, latency_ms=latency),
+        )
+
+    latency = int((time.time() - start_ms) * 1000)
+    text = response.choices[0].message.content
+    usage = response.usage
+
+    return TaskResponse(
+        status="success",
+        result={"text": text},
+        usage=UsageModel(
+            model_used=f"{provider}/{model}",
+            input_tokens=usage.prompt_tokens or 0,
+            output_tokens=usage.completion_tokens or 0,
+            latency_ms=latency,
+        ),
+    )
 
 
 @app.get("/health")
 async def health():
-    model_ok = await check_code_review()
     return {
-        "status": "ok" if model_ok else "degraded",
+        "status": "ok",
         "service": os.getenv("SERVICE_NAME", "agents"),
         "uptime_seconds": int(time.time() - START_TIME),
-        "agents": {"code_review": {"model_reachable": model_ok}},
+        "engine": "litellm",
     }
 
 
 @app.get("/metrics")
 async def metrics():
-    return {"code_review": get_code_review_metrics()}
+    return {"engine": "litellm", "note": "per-agent metrics tracked in DB via agent_stats"}

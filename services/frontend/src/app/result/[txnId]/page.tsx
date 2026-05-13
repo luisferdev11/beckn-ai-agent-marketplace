@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, use, useCallback } from 'react';
+import { useEffect, useState, use } from 'react';
 import Link from 'next/link';
 import { pollStatus, iconForAgent } from '@/lib/beckn-api';
 import type { PerformanceAttributes } from '@/lib/beckn-api';
@@ -44,41 +44,53 @@ export default function ResultPage({ params }: ResultPageProps) {
     } catch { /* ignore */ }
   }, [txnId]);
 
-  const fetchStatus = useCallback(async () => {
-    try {
-      const contract = await pollStatus(txnId);
-      const perf = contract.performance?.[0];
-      const pa = perf?.performanceAttributes;
-
-      if (pa) {
-        setPerformance(pa);
-        setSteps(prev => prev.map(s =>
-          s.id === 'execute' ? { ...s, status: 'done', timestamp: pa.completedAt } :
-          s.id === 'status' ? { ...s, status: 'done', timestamp: new Date().toISOString() } :
-          s
-        ));
-        setCompleted(true);
-      } else {
-        // Got on_status but no performance — agent might have failed or not started
-        const statusCode = perf?.status?.code;
-        if (statusCode === 'FAILED') {
-          setError(perf?.status?.shortDesc || 'Agent execution failed');
-          setSteps(prev => prev.map(s =>
-            s.id === 'execute' ? { ...s, status: 'done' } :
-            s.id === 'status' ? { ...s, status: 'done' } : s
-          ));
-          setCompleted(true);
-        }
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to get status');
-      setCompleted(true);
-    }
-  }, [txnId]);
-
   useEffect(() => {
-    fetchStatus();
-  }, [fetchStatus]);
+    let stopped = false;
+
+    const run = async () => {
+      const maxAttempts = 40; // ~2 minutes (3s intervals)
+      for (let i = 0; i < maxAttempts && !stopped; i++) {
+        try {
+          // Each call triggers a fresh status request and waits for the on_status callback
+          const contract = await pollStatus(txnId);
+          const perf = contract.performance?.[0];
+          const pa = perf?.performanceAttributes;
+          const statusCode = pa?.status || perf?.status?.code;
+
+          if (statusCode === 'COMPLETED' && pa) {
+            setPerformance(pa);
+            setSteps(prev => prev.map(s =>
+              s.id === 'execute' ? { ...s, status: 'done', timestamp: pa.completedAt } :
+              s.id === 'status' ? { ...s, status: 'done', timestamp: new Date().toISOString() } :
+              s
+            ));
+            setCompleted(true);
+            return;
+          } else if (statusCode === 'FAILED') {
+            setError(perf?.status?.shortDesc || String(pa?.result?.text ?? 'Agent execution failed'));
+            setSteps(prev => prev.map(s =>
+              s.id === 'execute' ? { ...s, status: 'done' } :
+              s.id === 'status' ? { ...s, status: 'done' } : s
+            ));
+            setCompleted(true);
+            return;
+          }
+        } catch {
+          // pollStatus threw (timeout or network) — retry
+        }
+
+        if (!stopped) await new Promise(r => setTimeout(r, 3000));
+      }
+
+      if (!stopped) {
+        setError('Timeout waiting for agent result');
+        setCompleted(true);
+      }
+    };
+
+    run();
+    return () => { stopped = true; };
+  }, [txnId]);
 
   const icon = agentInfo?.icon || iconForAgent(agentInfo?.name || '');
   const agentName = agentInfo?.name || 'AI Agent';

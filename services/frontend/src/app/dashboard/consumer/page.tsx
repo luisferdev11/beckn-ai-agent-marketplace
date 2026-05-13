@@ -85,7 +85,7 @@ export default function ConsumerDashboard() {
       >
         {/* Top bar */}
         <header style={{
-          position: 'relative', zIndex: 10,
+          position: 'relative', zIndex: 20,
           borderBottom: '1px solid rgba(255,255,255,0.08)',
           background: 'rgba(0,24,53,0.5)',
           backdropFilter: 'blur(12px)',
@@ -101,7 +101,7 @@ export default function ConsumerDashboard() {
                 fontFamily: 'var(--font-plex)', fontWeight: 700,
                 fontSize: 20, letterSpacing: '-0.01em', color: '#FFFFFF',
               }}>
-                <span style={{ color: '#007CC3' }}>Infosys</span>
+                <img src="/infosys-logo.png" alt="Infosys" style={{ height: 22 }} />
                 <span style={{ color: 'rgba(255,255,255,0.35)', margin: '0 10px', fontWeight: 300 }}>|</span>
                 <span style={{ fontSize: 15, fontWeight: 500, color: 'rgba(255,255,255,0.85)', letterSpacing: '0' }}>
                   AI Agent Marketplace

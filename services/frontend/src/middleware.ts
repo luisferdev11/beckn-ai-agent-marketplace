@@ -7,7 +7,7 @@ const JWT_SECRET = new TextEncoder().encode(
 
 const PUBLIC_ROUTES = [
   "/", "/login", "/register",
-  "/api/auth/login", "/api/auth/register", "/api/auth/check-email",
+  "/api/auth/login", "/api/auth/register", "/api/auth/check-email", "/api/auth/logout",
   "/api/providers", "/api/categories", "/api/health",
 ];
 

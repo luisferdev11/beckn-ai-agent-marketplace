@@ -16,7 +16,7 @@ export default function LandingPage() {
           height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         }}>
           <div style={{ display: 'flex', alignItems: 'center' }}>
-            <span style={{ color: '#007CC3', fontFamily: 'var(--font-plex)', fontWeight: 700, fontSize: 20 }}>Infosys</span>
+            <img src="/infosys-logo.png" alt="Infosys" style={{ height: 22 }} />
             <span style={{ color: 'rgba(255,255,255,0.35)', margin: '0 10px', fontWeight: 300 }}>|</span>
             <span style={{ fontSize: 15, fontWeight: 500, color: 'rgba(255,255,255,0.85)', fontFamily: 'var(--font-plex)' }}>AI Agent Marketplace</span>
           </div>

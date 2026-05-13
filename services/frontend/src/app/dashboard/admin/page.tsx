@@ -115,7 +115,7 @@ export default function AdminDashboard() {
           height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <span style={{ color: 'var(--infosys-cobalt)', fontFamily: 'var(--font-plex)', fontWeight: 700, fontSize: 20 }}>Infosys</span>
+            <img src="/infosys-logo.png" alt="Infosys" style={{ height: 22 }} />
             <span style={{ color: 'var(--border-strong)', margin: '0 4px', fontWeight: 300 }}>|</span>
             <span style={{ fontSize: 15, fontWeight: 500, color: 'var(--text-secondary)', fontFamily: 'var(--font-plex)' }}>Admin Panel</span>
           </div>
