@@ -134,6 +134,27 @@ services:
     networks:
       - beckn_network
 
+  # ONIX adapter for the second BPP (Serg Ops). Same image, different
+  # config + identity — listens on a separate port and signs with its
+  # own Ed25519 keypair (registered in mock-network as bpp-serg.example.com).
+  onix-bpp-serg:
+    image: fidedocker/onix-adapter
+    platform: linux/amd64
+    command: ["./server", "--config=/app/config/bpp-serg.yaml"]
+    ports:
+      - "8083:8083"
+    volumes:
+      - ./onix:/app/config
+    environment:
+      - REDIS_ADDR=redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+      mock-network:
+        condition: service_healthy
+    networks:
+      - beckn_network
+
   # ─── Nuestros servicios ───────────────────────────────────────────
 
   # MARKETPLACE (BAP - Beckn Application Platform)
@@ -208,6 +229,39 @@ services:
     networks:
       - beckn_network
 
+  # PROVIDER 2 (BPP-Serg)
+  # Second BPP with a different provider identity ("Serg Ops") and a different
+  # agent runtime (services/agents-serg, OrderedApi-derived). Coexists with
+  # bpp-provider so a single discover returns agents from both providers.
+  # Iter 0: still uses an in-memory catalog (services/bpp-serg/app/catalog_data.py)
+  # — Postgres migration tracked separately.
+  bpp-serg:
+    build:
+      context: ..
+      dockerfile: services/bpp-serg/Dockerfile
+    ports:
+      - "3005:3005"
+    environment:
+      - PORT=3005
+      - BPP_ID=bpp-serg.example.com
+      - BPP_URI=http://onix-bpp-serg:8083/bpp/receiver
+      - BPP_CALLBACK_URL=http://onix-bpp-serg:8083/bpp/caller
+      - ORCHESTRATOR_URL=http://orchestrator:3003
+      - SERVICE_NAME=bpp-serg
+      - AGENT_ROUTING_FILE=/app/config/agent-routing/serg.yaml
+    volumes:
+      - ./agent-routing:/app/config/agent-routing:ro
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3005/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - beckn_network
+
   # ORCHESTRATOR
   # Recibe tareas del provider despues de un confirm, ejecuta agentes IA,
   # y devuelve resultados. Espera a que agents este healthy: toda ejecucion
@@ -254,6 +308,51 @@ services:
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3004/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - beckn_network
+
+  # DISCOVERY SERVICE — local DS that fans out a `discover` to every
+  # registered BPP. Replaces the production DS hosted by Beckn One at
+  # fabric.nfh.global until we have a public domain. ONIX-BAP routes
+  # the discover action here (see infra/onix/generic-routing-BAPCaller.yaml);
+  # each BPP responds with its own on_discover via the standard ONIX path.
+  discovery:
+    build:
+      context: ..
+      dockerfile: services/discovery/Dockerfile
+    ports:
+      - "3007:3007"
+    environment:
+      - DISCOVERY_CONFIG_PATH=/app/config/bpps.yaml
+    volumes:
+      - ./discovery:/app/config:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3007/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - beckn_network
+
+  # AGENTS-SERG — Agentes IA de Serg Ops (6 agentes derivados de OrderedApi:
+  # summarizer, extractor, code reviewer, translator, email writer, sentiment).
+  # Expone /task con el mismo contrato que `agents` para que el orchestrator
+  # pueda invocar a ambos sin saber cual es cual.
+  agents-serg:
+    build:
+      context: ..
+      dockerfile: services/agents-serg/Dockerfile
+    ports:
+      - "3006:3006"
+    environment:
+      - PORT=3006
+      - SERVICE_NAME=agents-serg
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3006/health"]
       interval: 15s
       timeout: 5s
       retries: 5

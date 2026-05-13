@@ -20,11 +20,13 @@ routingRules:
       - rate
       - support
 
-  # Discovery: routed to Discover Service
+  # Discovery: routed to our local Discovery Service, which fans out to all
+  # registered BPPs. Each BPP responds with its own on_discover via the
+  # standard ONIX path back to the BAP.
   - domain: "beckn.one/testnet"
     version: "2.0.0"
     targetType: "url"
     target:
-      url: "http://onix-bpp:8082/bpp/receiver"   # Local: discover goes directly to our BPP
+      url: "http://discovery:3007/beckn"
     endpoints:
       - discover

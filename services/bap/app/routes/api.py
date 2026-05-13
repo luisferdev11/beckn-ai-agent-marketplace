@@ -20,7 +20,7 @@ import uuid
 from datetime import datetime, timezone
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional
@@ -29,6 +29,8 @@ from app.config import BAP_CALLER_URL, BAP_ID, BAP_URI, BPP_ID, BPP_URI, NETWORK
 from app.store import (
     get_all_callbacks, get_last_callback, get_callbacks_count,
     get_all_transactions, get_transaction, get_transaction_contract,
+    set_transaction_target, get_transaction_target,
+    create_draft_contract, contract_exists,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,20 +43,53 @@ def _now_iso() -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
 
 
-def _build_context(action: str, transaction_id: str | None = None) -> dict:
+def _build_context(
+    action: str,
+    transaction_id: str | None = None,
+    bpp_id: str | None = None,
+    bpp_uri: str | None = None,
+) -> dict:
     return {
         "networkId": NETWORK_ID,
         "action": action,
         "version": "2.0.0",
         "bapId": BAP_ID,
         "bapUri": BAP_URI,
-        "bppId": BPP_ID,
-        "bppUri": BPP_URI,
+        "bppId": bpp_id or BPP_ID,
+        "bppUri": bpp_uri or BPP_URI,
         "transactionId": transaction_id or str(uuid.uuid4()),
         "messageId": str(uuid.uuid4()),
         "timestamp": _now_iso(),
         "ttl": "PT30S",
     }
+
+
+def _resolve_bpp_target(req_bpp_id: str | None, req_bpp_uri: str | None, txn_id: str) -> tuple[str | None, str | None]:
+    """Pick the BPP target: explicit override > stored from select > config default."""
+    if req_bpp_id and req_bpp_uri:
+        return req_bpp_id, req_bpp_uri
+    target = get_transaction_target(txn_id)
+    return target.get("bpp_id") or req_bpp_id, target.get("bpp_uri") or req_bpp_uri
+
+
+async def _require_known_transaction(txn_id: str, action: str) -> None:
+    """Reject actions on transactions that never went through select.
+
+    Without this guard, the BAP would forward the request to the BPP and the
+    resulting on_* callback would (used to) materialize a phantom contract row.
+    See issue #12.
+    """
+    if not await contract_exists(txn_id):
+        logger.warning(f"rejected {action} for unknown txn={txn_id[:8]} — no prior select")
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "transaction_not_found",
+                "message": f"No contract exists for transaction_id={txn_id}. "
+                           f"You must call /api/contracts/select first.",
+                "transaction_id": txn_id,
+            },
+        )
 
 
 async def _send_to_onix(action: str, payload: dict) -> dict:
@@ -80,34 +115,49 @@ class SelectRequest(BaseModel):
     offer_id: str = "offer-summarizer-basic"
     quantity: int = 1
     buyer_name: str = "Marketplace User"
+    # Optional overrides — used after a federated discover to pick a specific BPP.
+    bpp_id: Optional[str] = None
+    bpp_uri: Optional[str] = None
 
 
 @router.post("/contracts/select")
 async def select(req: SelectRequest):
     """Start a new transaction: select an agent."""
     txn_id = req.transaction_id or str(uuid.uuid4())
-    ctx = _build_context("select", txn_id)
+    ctx = _build_context("select", txn_id, req.bpp_id, req.bpp_uri)
     ctx["schemaContext"] = []
+    # Remember which BPP this txn targets so init/confirm/status reuse it.
+    set_transaction_target(txn_id, ctx["bppId"], ctx["bppUri"])
+
+    contract_code = f"contract-{txn_id[:8]}"
+    participants = [
+        {"id": "participant-buyer-001", "descriptor": {"name": req.buyer_name, "code": "buyer"}}
+    ]
+    commitments = [{
+        "id": "commitment-001",
+        "descriptor": {"name": "AI Agent Service", "code": "AAS-001"},
+        "status": {"code": "DRAFT"},
+        "resources": [{
+            "id": req.agent_id,
+            "descriptor": {"name": "AI Agent", "code": req.agent_id},
+            "quantity": {"unitQuantity": req.quantity, "unitCode": "UNIT"},
+        }],
+        "offer": {"id": req.offer_id, "resourceIds": [req.agent_id]},
+    }]
+
+    # Materialize the contract in DRAFT before talking to the network. This
+    # is the only path that creates rows in `contracts` — callbacks never do.
+    # Makes the invariant "row exists ⇔ legitimate select happened" true by
+    # construction, and lets later endpoints fail fast with 404. See issue #12.
+    await create_draft_contract(txn_id, contract_code, commitments, participants)
 
     payload = {
         "context": ctx,
         "message": {
             "contract": {
-                "id": f"contract-{txn_id[:8]}",
-                "participants": [
-                    {"id": "participant-buyer-001", "descriptor": {"name": req.buyer_name, "code": "buyer"}}
-                ],
-                "commitments": [{
-                    "id": "commitment-001",
-                    "descriptor": {"name": "AI Agent Service", "code": "AAS-001"},
-                    "status": {"code": "DRAFT"},
-                    "resources": [{
-                        "id": req.agent_id,
-                        "descriptor": {"name": "AI Agent", "code": req.agent_id},
-                        "quantity": {"unitQuantity": req.quantity, "unitCode": "UNIT"},
-                    }],
-                    "offer": {"id": req.offer_id, "resourceIds": [req.agent_id]},
-                }],
+                "id": contract_code,
+                "participants": participants,
+                "commitments": commitments,
             }
         },
     }
@@ -118,19 +168,24 @@ async def select(req: SelectRequest):
 
 class TxnRequest(BaseModel):
     transaction_id: str
+    bpp_id: Optional[str] = None
+    bpp_uri: Optional[str] = None
 
 
-class ConfirmRequest(BaseModel):
-    transaction_id: str
+class ConfirmRequest(TxnRequest):
     prompt: Optional[str] = None
+    agent_id: Optional[str] = None
+    agent_input: Optional[dict] = None
 
 
 @router.post("/contracts/init")
 async def init(req: TxnRequest):
     """Continue transaction: provide fulfillment details.
     Uses stored contract data from on_select callback."""
+    await _require_known_transaction(req.transaction_id, "init")
     contract = await get_transaction_contract(req.transaction_id)
-    ctx = _build_context("init", req.transaction_id)
+    bpp_id, bpp_uri = _resolve_bpp_target(req.bpp_id, req.bpp_uri, req.transaction_id)
+    ctx = _build_context("init", req.transaction_id, bpp_id, bpp_uri)
 
     # Use commitments and participants from on_select if available
     commitments = contract.get("commitments", [])
@@ -180,8 +235,10 @@ async def confirm(req: ConfirmRequest):
     """Confirm the transaction: trigger agent execution.
     Uses stored contract data from on_select/on_init callbacks.
     Accepts optional prompt to inject into commitment resources."""
+    await _require_known_transaction(req.transaction_id, "confirm")
     contract = await get_transaction_contract(req.transaction_id)
-    ctx = _build_context("confirm", req.transaction_id)
+    bpp_id, bpp_uri = _resolve_bpp_target(req.bpp_id, req.bpp_uri, req.transaction_id)
+    ctx = _build_context("confirm", req.transaction_id, bpp_id, bpp_uri)
 
     contract_id = contract.get("id", f"contract-{req.transaction_id[:8]}")
     commitments = contract.get("commitments", [])
@@ -206,6 +263,12 @@ async def confirm(req: ConfirmRequest):
             status = ic.get("status", {})
             if isinstance(status, dict) and "code" in status and "descriptor" not in status:
                 ic["status"] = {"descriptor": {"code": status["code"]}}
+            # Embed agent_input where the BPP/orchestrator expects to read it.
+            if req.agent_input:
+                ic["performanceAttributes"] = {
+                    **(ic.get("performanceAttributes") or {}),
+                    **req.agent_input,
+                }
             confirm_commitments.append(ic)
         commitments = confirm_commitments
 
@@ -244,8 +307,10 @@ async def confirm(req: ConfirmRequest):
 @router.post("/contracts/status")
 async def status(req: TxnRequest):
     """Check execution status. Uses stored commitments."""
+    await _require_known_transaction(req.transaction_id, "status")
     contract = await get_transaction_contract(req.transaction_id)
-    ctx = _build_context("status", req.transaction_id)
+    bpp_id, bpp_uri = _resolve_bpp_target(req.bpp_id, req.bpp_uri, req.transaction_id)
+    ctx = _build_context("status", req.transaction_id, bpp_id, bpp_uri)
 
     commitments = contract.get("commitments", [])
     if not commitments:
@@ -324,8 +389,10 @@ async def discover(req: DiscoverRequest):
 @router.post("/contracts/cancel")
 async def cancel(req: TxnRequest):
     """Cancel an active transaction."""
+    await _require_known_transaction(req.transaction_id, "cancel")
     contract = await get_transaction_contract(req.transaction_id)
-    ctx = _build_context("cancel", req.transaction_id)
+    bpp_id, bpp_uri = _resolve_bpp_target(req.bpp_id, req.bpp_uri, req.transaction_id)
+    ctx = _build_context("cancel", req.transaction_id, bpp_id, bpp_uri)
 
     commitments = contract.get("commitments", [])
     if not commitments:

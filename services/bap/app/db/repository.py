@@ -8,8 +8,52 @@ from app.db.pool import get_pool
 logger = logging.getLogger(__name__)
 
 
+async def create_draft_contract(
+    txn_id: str,
+    contract_code: str,
+    commitments: list | None = None,
+    participants: list | None = None,
+) -> bool:
+    """Pre-create a contract row in DRAFT status when the user initiates select.
+
+    Idempotent: if the row already exists (re-select with same txn_id), does
+    nothing and returns False. Returns True when a new row was created.
+
+    This is the source of truth for "a transaction exists": only legitimate
+    select calls create rows. Callbacks (on_*) only update — they never
+    materialize new contracts. See issue #12.
+    """
+    pool = await get_pool()
+    result = await pool.execute(
+        """INSERT INTO contracts (contract_code, transaction_id, status,
+               commitments, participants)
+           VALUES ($1,$2,'DRAFT',$3,$4)
+           ON CONFLICT (transaction_id) DO NOTHING""",
+        contract_code, txn_id,
+        json.dumps(commitments or []),
+        json.dumps(participants or []),
+    )
+    return result.endswith(" 1")
+
+
+async def contract_exists(txn_id: str) -> bool:
+    """Return True if a contract row exists for this transaction."""
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        "SELECT 1 FROM contracts WHERE transaction_id = $1",
+        txn_id,
+    )
+    return row is not None
+
+
 async def store_callback(context: dict, message: dict):
-    """Store an incoming on_* callback and update transaction contract state."""
+    """Store an incoming on_* callback and update transaction contract state.
+
+    The callback is always recorded in the `callbacks` table (audit log).
+    The `contracts` row is only updated if it already exists — callbacks for
+    unknown transactions are logged as warnings and do NOT create phantom
+    rows. See issue #12.
+    """
     pool = await get_pool()
     action = context.get("action", "unknown")
     txn_id = context.get("transactionId", "unknown")
@@ -23,55 +67,51 @@ async def store_callback(context: dict, message: dict):
     existing = await pool.fetchrow("SELECT * FROM contracts WHERE transaction_id = $1", txn_id)
 
     if not existing:
-        contract_code = contract_data.get("id", f"contract-{txn_id[:8]}")
-        await pool.execute(
-            """INSERT INTO contracts (contract_code, transaction_id, status,
-                   commitments, consideration, performance, settlements, participants)
-               VALUES ($1,$2,'ACTIVE',$3,$4,$5,$6,$7)""",
-            contract_code, txn_id,
-            json.dumps(contract_data.get("commitments", [])),
-            json.dumps(contract_data.get("consideration", [])),
-            json.dumps(contract_data.get("performance", [])),
-            json.dumps(contract_data.get("settlements", [])),
-            json.dumps(contract_data.get("participants", [])),
+        logger.warning(
+            f"orphan callback {action} [txn={txn_id[:8]}] — no matching contract row, "
+            f"skipping contract update (callback still recorded for audit)"
         )
-    else:
-        updates = {}
-        if action == "on_select":
-            if contract_data.get("id"):
-                updates["contract_code"] = contract_data["id"]
-            if contract_data.get("commitments"):
-                updates["commitments"] = contract_data["commitments"]
-            if contract_data.get("consideration"):
-                updates["consideration"] = contract_data["consideration"]
-            if contract_data.get("participants"):
-                updates["participants"] = contract_data["participants"]
-        elif action in ("on_init", "on_confirm"):
-            if contract_data.get("performance"):
-                updates["performance"] = contract_data["performance"]
-            if contract_data.get("settlements"):
-                updates["settlements"] = contract_data["settlements"]
-            if action == "on_confirm":
-                updates["status"] = "CONFIRMED"
-        elif action == "on_status":
-            if contract_data.get("performance"):
-                updates["performance"] = contract_data["performance"]
-            updates["status"] = "COMPLETED"
+        return
 
-        if updates:
-            sets = []
-            vals = []
-            i = 1
-            json_fields = {"commitments", "consideration", "performance", "settlements", "participants"}
-            for key, val in updates.items():
-                sets.append(f"{key} = ${i}")
-                vals.append(json.dumps(val) if key in json_fields else val)
-                i += 1
-            vals.append(txn_id)
-            await pool.execute(
-                f"UPDATE contracts SET {', '.join(sets)} WHERE transaction_id = ${i}",
-                *vals,
-            )
+    updates = {}
+    if action == "on_select":
+        if contract_data.get("id"):
+            updates["contract_code"] = contract_data["id"]
+        if contract_data.get("commitments"):
+            updates["commitments"] = contract_data["commitments"]
+        if contract_data.get("consideration"):
+            updates["consideration"] = contract_data["consideration"]
+        if contract_data.get("participants"):
+            updates["participants"] = contract_data["participants"]
+    elif action in ("on_init", "on_confirm"):
+        if contract_data.get("performance"):
+            updates["performance"] = contract_data["performance"]
+        if contract_data.get("settlements"):
+            updates["settlements"] = contract_data["settlements"]
+        if action == "on_confirm":
+            # contracts.status CHECK in 001_schema.sql accepts
+            # DRAFT/ACTIVE/COMPLETED/FAILED/CANCELLED. ACTIVE on confirm;
+            # transitions to COMPLETED when on_status arrives terminal.
+            updates["status"] = "ACTIVE"
+    elif action == "on_status":
+        if contract_data.get("performance"):
+            updates["performance"] = contract_data["performance"]
+        updates["status"] = "COMPLETED"
+
+    if updates:
+        sets = []
+        vals = []
+        i = 1
+        json_fields = {"commitments", "consideration", "performance", "settlements", "participants"}
+        for key, val in updates.items():
+            sets.append(f"{key} = ${i}")
+            vals.append(json.dumps(val) if key in json_fields else val)
+            i += 1
+        vals.append(txn_id)
+        await pool.execute(
+            f"UPDATE contracts SET {', '.join(sets)} WHERE transaction_id = ${i}",
+            *vals,
+        )
 
     logger.info(f"stored callback {action} [txn={txn_id[:8]}]")
 
