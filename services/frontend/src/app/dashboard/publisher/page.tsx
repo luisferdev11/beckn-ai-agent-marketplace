@@ -170,7 +170,6 @@ export default function PublisherDashboard() {
       {showNewAgent && (
         <RegisterAgentForm
           token={token}
-          integrationMode={provider?.integration_mode || 'managed'}
           onSuccess={() => { setShowNewAgent(false); loadData(token, user.provider_id); }}
           onCancel={() => setShowNewAgent(false)}
         />

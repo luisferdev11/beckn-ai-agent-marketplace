@@ -292,27 +292,9 @@ async def _register_execution(txn_id: str, stored: dict) -> None:
     sla = {}
 
     agent = await repo.get_agent_by_beckn_id(agent_beckn_id)
-    credentials = {}
     if agent:
         sla = _parse_jsonb(agent.get("sla", {}))
         agent_url = agent.get("access_point_url") or agent_url
-        raw_creds = _parse_jsonb(agent.get("credentials", {}))
-        if raw_creds.get("api_key"):
-            try:
-                from app.crypto import decrypt
-                credentials["api_key"] = decrypt(raw_creds["api_key"])
-            except Exception as exc:
-                logger.warning("dispatch: failed to decrypt credentials for %s: %s", agent_beckn_id, exc)
-
-        # Pass LLM config so the agents service knows which provider/model to use
-        if agent.get("llm_provider"):
-            credentials["llm_provider"] = agent["llm_provider"]
-        if agent.get("llm_model"):
-            credentials["llm_model"] = agent["llm_model"]
-        if agent.get("system_prompt"):
-            credentials["system_prompt"] = agent["system_prompt"]
-        if agent.get("temperature") is not None:
-            credentials["temperature"] = float(agent["temperature"])
 
     # Extract prompt from multiple possible locations in the commitment
     agent_input = commitments[0].get("performanceAttributes", {}) or {}
@@ -333,8 +315,6 @@ async def _register_execution(txn_id: str, stored: dict) -> None:
             "input": agent_input,
             "timeout_ms": timeout_ms,
         }
-        if credentials:
-            payload["credentials"] = credentials
         # This call returns as soon as the orchestrator ACKs and stores the execution_id.
         # The orchestrator then runs dispatch() in the background.
         ack = await orchestrator_client.start_execution(payload)

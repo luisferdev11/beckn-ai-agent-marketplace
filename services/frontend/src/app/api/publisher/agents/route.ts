@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
 import { requireRole } from "@/lib/auth";
-import { encrypt } from "@/lib/crypto";
 import crypto from "crypto";
 
 export async function GET(req: NextRequest) {
@@ -13,8 +12,6 @@ export async function GET(req: NextRequest) {
             COALESCE(a.agent_name->>'en', a.agent_name #>> '{}') AS agent_name,
             a.description, a.status,
             a.pricing_model, a.category_id, a.created_at, a.access_point_url,
-            a.llm_provider, a.llm_model, a.system_prompt, a.temperature,
-            a.credentials != '{}'::jsonb AS has_credentials,
             c.name AS category_name,
             COALESCE(s.total_queries, 0) AS total_queries,
             s.last_used_at
@@ -40,16 +37,16 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const {
     agent_name, description, category_id, pricing_model,
-    access_point_url, status, api_key,
-    llm_provider, llm_model, system_prompt, temperature,
+    access_point_url, status,
   } = body;
 
   if (!agent_name || !category_id) {
     return NextResponse.json({ error: "Nombre y categoría requeridos" }, { status: 400 });
   }
 
-  // Encrypt API key if provided (managed mode)
-  const credentials = api_key ? { api_key: encrypt(api_key) } : {};
+  if (!access_point_url) {
+    return NextResponse.json({ error: "Endpoint URL requerido" }, { status: 400 });
+  }
 
   // Auto-generate beckn_id from agent name
   const slug = agent_name
@@ -64,10 +61,9 @@ export async function POST(req: NextRequest) {
     const result = await pool.query(
       `INSERT INTO agents (
          provider_id, category_id, agent_name, label, beckn_id,
-         description, pricing_model, access_point_url, status, credentials,
-         llm_provider, llm_model, system_prompt, temperature
+         description, pricing_model, access_point_url, status
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING id, beckn_id, label, description, status, created_at`,
       [
         user.provider_id,
@@ -77,13 +73,8 @@ export async function POST(req: NextRequest) {
         beckn_id,
         description || "",
         JSON.stringify(pricing_model || {}),
-        access_point_url || "http://agents:3004",
+        access_point_url,
         status || "active",
-        JSON.stringify(credentials),
-        llm_provider || null,
-        llm_model || null,
-        system_prompt || "",
-        temperature ?? 0.7,
       ]
     );
 

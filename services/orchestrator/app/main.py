@@ -75,7 +75,6 @@ async def execute_task(request: ExecuteRequest):
         input_schema=request.input_schema,
         output_schema=request.output_schema,
         timeout_ms=request.timeout_ms,
-        credentials=request.credentials,
     )
     executor.store_create(record)
     asyncio.create_task(executor.dispatch(record, request))
