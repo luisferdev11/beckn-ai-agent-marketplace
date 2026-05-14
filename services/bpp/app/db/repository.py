@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
-from app.db.pool import get_pool
+from app.db.pool import get_pool, get_transactions_pool
 
 logger = logging.getLogger(__name__)
 
@@ -202,7 +202,7 @@ async def search_agents(keywords: list[str]):
 # ─── Contracts ───────────────────────────────────────────────
 
 async def create_contract(contract_code: str, transaction_id: str, **kwargs):
-    pool = await get_pool()
+    pool = await get_transactions_pool()
     json_fields = {"commitments", "consideration", "performance", "settlements", "participants"}
     row = await pool.fetchrow(
         """INSERT INTO contracts (contract_code, transaction_id, agent_id, provider_id,
@@ -233,13 +233,13 @@ async def create_contract(contract_code: str, transaction_id: str, **kwargs):
 
 
 async def get_contract_by_txn(transaction_id: str):
-    pool = await get_pool()
+    pool = await get_transactions_pool()
     row = await pool.fetchrow("SELECT * FROM contracts WHERE transaction_id = $1", transaction_id)
     return dict(row) if row else None
 
 
 async def update_contract(transaction_id: str, **kwargs):
-    pool = await get_pool()
+    pool = await get_transactions_pool()
     sets = []
     vals = []
     i = 1
@@ -255,6 +255,6 @@ async def update_contract(transaction_id: str, **kwargs):
 
 
 async def list_contracts():
-    pool = await get_pool()
+    pool = await get_transactions_pool()
     rows = await pool.fetch("SELECT * FROM contracts ORDER BY created_at DESC LIMIT 100")
     return [dict(r) for r in rows]

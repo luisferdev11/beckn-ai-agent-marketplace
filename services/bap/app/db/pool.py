@@ -15,7 +15,7 @@ async def get_pool() -> asyncpg.Pool:
         _pool = await asyncpg.create_pool(
             host=os.getenv("DB_HOST", "localhost"),
             port=int(os.getenv("DB_PORT", "5432")),
-            database=os.getenv("DB_NAME", "beckn_ai_marketplace"),
+            database=os.getenv("DB_NAME", "beckn_transactions"),
             user=os.getenv("DB_USER", "postgres"),
             password=password,
             min_size=2,

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
+import { metricsPool } from "@/lib/db";
 import { requireRole } from "@/lib/auth";
 import crypto from "crypto";
 
@@ -78,8 +79,8 @@ export async function POST(req: NextRequest) {
       ]
     );
 
-    // Create initial stats row
-    await pool.query("INSERT INTO agent_stats (agent_id) VALUES ($1)", [result.rows[0].id]);
+    // Create initial stats row (metrics DB)
+    await metricsPool.query("INSERT INTO agent_stats (agent_id) VALUES ($1)", [result.rows[0].id]);
 
     return NextResponse.json(result.rows[0], { status: 201 });
   } catch (err: unknown) {

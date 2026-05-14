@@ -73,9 +73,13 @@ services:
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_NAME_CATALOG=${DB_NAME_CATALOG}
+      - DB_NAME_TRANSACTIONS=${DB_NAME_TRANSACTIONS}
+      - DB_NAME_METRICS=${DB_NAME_METRICS}
     volumes:
       - ./db/migrations:/docker-entrypoint-initdb.d/migrations
       - ./db/init.sh:/docker-entrypoint-initdb.d/init.sh
+      - ./db/migrate_split_dbs.sh:/docker-entrypoint-initdb.d/migrate_split_dbs.sh
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
@@ -175,7 +179,7 @@ services:
       - SERVICE_NAME=bap-marketplace
       - DB_HOST=postgres
       - DB_PORT=5432
-      - DB_NAME=${POSTGRES_DB}
+      - DB_NAME=${DB_NAME_TRANSACTIONS}
       - DB_USER=${POSTGRES_USER}
       - DB_PASSWORD=${POSTGRES_PASSWORD}
     depends_on:
@@ -212,10 +216,10 @@ services:
       - AGENT_URL_MAP={"agent-summarizer-001":"http://agents:3004","agent-code-reviewer-001":"http://agents:3004","agent-data-extractor-001":"http://agents:3004"}
       - DB_HOST=postgres
       - DB_PORT=5432
-      - DB_NAME=${POSTGRES_DB}
+      - DB_NAME_CATALOG=${DB_NAME_CATALOG}
+      - DB_NAME_TRANSACTIONS=${DB_NAME_TRANSACTIONS}
       - DB_USER=${POSTGRES_USER}
       - DB_PASSWORD=${POSTGRES_PASSWORD}
-      - CREDENTIALS_ENCRYPTION_KEY=${CREDENTIALS_ENCRYPTION_KEY}
     depends_on:
       orchestrator:
         condition: service_healthy
@@ -376,11 +380,11 @@ services:
       - BAP_URL=http://bap-marketplace:3001
       - DB_HOST=postgres
       - DB_PORT=5432
-      - DB_NAME=${POSTGRES_DB}
+      - DB_NAME_CATALOG=${DB_NAME_CATALOG}
+      - DB_NAME_METRICS=${DB_NAME_METRICS}
       - DB_USER=${POSTGRES_USER}
       - DB_PASSWORD=${POSTGRES_PASSWORD}
       - JWT_SECRET=beckn-marketplace-jwt-secret-2026
-      - CREDENTIALS_ENCRYPTION_KEY=${CREDENTIALS_ENCRYPTION_KEY}
     depends_on:
       bap-marketplace:
         condition: service_healthy
