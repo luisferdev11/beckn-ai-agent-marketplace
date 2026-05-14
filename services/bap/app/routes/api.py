@@ -173,7 +173,6 @@ class TxnRequest(BaseModel):
 
 
 class ConfirmRequest(TxnRequest):
-    prompt: Optional[str] = None
     agent_id: Optional[str] = None
     agent_input: Optional[dict] = None
 
@@ -271,13 +270,6 @@ async def confirm(req: ConfirmRequest):
                 }
             confirm_commitments.append(ic)
         commitments = confirm_commitments
-
-    # Inject user prompt into commitment resources
-    if req.prompt:
-        for c in commitments:
-            resources = c.get("resources", [])
-            if resources:
-                resources[0].setdefault("descriptor", {})["longDesc"] = req.prompt
 
     if not participants:
         participants = [{"id": "participant-buyer-001", "descriptor": {"name": "Marketplace User", "code": "buyer"}}]
