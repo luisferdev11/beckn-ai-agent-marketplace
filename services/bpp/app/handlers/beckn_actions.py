@@ -48,6 +48,10 @@ def build_response_context(incoming_context: dict, action: str) -> dict:
 TXN_NOT_FOUND_CODE = "30002"
 TXN_NOT_FOUND_MESSAGE = "Transaction not found"
 
+# Beckn v2 error code returned by on_select when at least one requested
+# resource does not match any agent in this BPP's catalog. See issue #15.
+UNKNOWN_AGENT_CODE = "30001"
+
 
 def _txn_not_found_response(context: dict, action: str) -> dict:
     """
@@ -63,6 +67,22 @@ def _txn_not_found_response(context: dict, action: str) -> dict:
         "error": {
             "code": TXN_NOT_FOUND_CODE,
             "message": TXN_NOT_FOUND_MESSAGE,
+        },
+    }
+
+
+def _unknown_agent_response(context: dict, agent_id: str) -> dict:
+    """
+    Build an on_select envelope that rejects a select carrying a resource id
+    we cannot resolve in our catalog. Mirrors `_txn_not_found_response`: only
+    context + error, no message — so the BAP sees a clear failure rather
+    than a price=0 contract.
+    """
+    return {
+        "context": build_response_context(context, "select"),
+        "error": {
+            "code": UNKNOWN_AGENT_CODE,
+            "message": f"Agent not found: {agent_id}",
         },
     }
 
@@ -141,6 +161,28 @@ async def handle_select(context: dict, message: dict) -> dict:
     commitments = contract.get("commitments", [])
     participants = contract.get("participants", [])
 
+    # All-or-nothing pre-validation: a single unresolvable resource fails the
+    # whole select with error 30001. "Unresolvable" means the agent does not
+    # exist OR has status != 'active' (inactive/deprecated). From the user's
+    # point of view both cases are equivalent — the requested resource cannot
+    # be fulfilled. Without this guard, missing or inactive agents silently
+    # dropped out of the pricing loop and the BAP ended up with a DRAFT
+    # contract priced at 0.00 + 18% GST = 0.00. See issue #15.
+    resolved_agents: dict[str, dict] = {}
+    for commitment in commitments:
+        for res in commitment.get("resources", []):
+            agent_beckn_id = res.get("id", "")
+            if agent_beckn_id in resolved_agents:
+                continue
+            agent = await repo.get_agent_by_beckn_id(agent_beckn_id)
+            if not agent or agent.get("status") != "active":
+                reason = "unknown" if not agent else f"status={agent.get('status')}"
+                logger.warning(
+                    f"select: rejecting agent {agent_beckn_id} ({reason}) [txn={txn_id[:8]}]"
+                )
+                return _unknown_agent_response(context, agent_beckn_id)
+            resolved_agents[agent_beckn_id] = agent
+
     considerations = []
     for commitment in commitments:
         resources = commitment.get("resources", [])
@@ -149,7 +191,7 @@ async def handle_select(context: dict, message: dict) -> dict:
 
         for res in resources:
             agent_beckn_id = res.get("id", "")
-            agent = await repo.get_agent_by_beckn_id(agent_beckn_id)
+            agent = resolved_agents[agent_beckn_id]
 
             qty = res.get("quantity", {}).get("unitQuantity", 1)
             if agent:
