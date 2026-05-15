@@ -107,11 +107,5 @@ class TestQuantityMultiplier:
         assert total == "14.16"
 
 
-class TestUnknownAgent:
-    async def test_unknown_agent_price_is_zero(self):
-        ctx = make_beckn_context("select", "txn-unknown-001")
-        msg = make_select_contract_message("agent-does-not-exist-999")
-        response = await handle_select(ctx, msg)
-        consideration = response["message"]["contract"]["consideration"]
-        # Should not crash — returns zero-price consideration
-        assert len(consideration) > 0
+# Rejection of selects carrying an unknown agent id is covered in
+# tests/contract/test_select_validation.py (issue #15).
