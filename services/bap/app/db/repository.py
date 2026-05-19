@@ -96,7 +96,15 @@ async def store_callback(context: dict, message: dict):
     elif action == "on_status":
         if contract_data.get("performance"):
             updates["performance"] = contract_data["performance"]
-        updates["status"] = "COMPLETED"
+        # Promote contract.status only when execution is terminal. Intermediate
+        # codes (PENDING/RUNNING) leave the contract in its current state
+        # (ACTIVE since on_confirm). See issue #16.
+        perf = contract_data.get("performance") or []
+        exec_code = perf[0].get("status", {}).get("code", "") if perf else ""
+        if exec_code == "COMPLETED":
+            updates["status"] = "COMPLETED"
+        elif exec_code == "FAILED":
+            updates["status"] = "FAILED"
 
     if updates:
         sets = []
