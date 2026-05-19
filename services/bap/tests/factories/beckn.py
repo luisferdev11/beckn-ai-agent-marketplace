@@ -98,6 +98,42 @@ def make_on_confirm_callback(txn_id: str, contract_id: str = None) -> dict:
     }
 
 
+def make_on_status_pending_callback(txn_id: str, contract_id: str = None) -> dict:
+    """on_status mid-execution — performance status is RUNNING, not terminal."""
+    cid = contract_id or f"contract-{txn_id[:8]}"
+    return {
+        "context": make_context("on_status", txn_id=txn_id),
+        "message": {
+            "contract": {
+                "id": cid,
+                "commitments": [{"id": "commitment-001", "status": {"code": "ACTIVE"}}],
+                "performance": [{
+                    "id": "perf-001",
+                    "status": {"code": "RUNNING", "name": "Running", "shortDesc": "In progress"},
+                }],
+            }
+        },
+    }
+
+
+def make_on_status_failed_callback(txn_id: str, contract_id: str = None) -> dict:
+    """on_status terminal failure — performance status is FAILED."""
+    cid = contract_id or f"contract-{txn_id[:8]}"
+    return {
+        "context": make_context("on_status", txn_id=txn_id),
+        "message": {
+            "contract": {
+                "id": cid,
+                "commitments": [{"id": "commitment-001", "status": {"code": "ACTIVE"}}],
+                "performance": [{
+                    "id": "perf-001",
+                    "status": {"code": "FAILED", "name": "Failed", "shortDesc": "Agent error"},
+                }],
+            }
+        },
+    }
+
+
 def make_on_status_completed_callback(txn_id: str, contract_id: str = None) -> dict:
     cid = contract_id or f"contract-{txn_id[:8]}"
     schema_url = "https://raw.githubusercontent.com/danielctecla/beckn-ai-agent-marketplace/main/schemas/execution-result-v1.json"

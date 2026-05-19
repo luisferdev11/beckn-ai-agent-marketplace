@@ -98,7 +98,12 @@ def fake_db(monkeypatch):
         elif action == "on_status":
             if contract_data.get("performance"):
                 row["performance"] = contract_data["performance"]
-            row["status"] = "COMPLETED"
+            perf = contract_data.get("performance") or []
+            exec_code = perf[0].get("status", {}).get("code", "") if perf else ""
+            if exec_code == "COMPLETED":
+                row["status"] = "COMPLETED"
+            elif exec_code == "FAILED":
+                row["status"] = "FAILED"
 
     async def _get_transaction_contract(txn_id):
         if txn_id not in contracts:
