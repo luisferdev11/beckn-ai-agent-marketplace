@@ -1,5 +1,13 @@
--- 001_schema.sql — Beckn AI Agent Marketplace PostgreSQL schema
--- All primary keys use SERIAL (auto-incrementing integers)
+-- 001_schema.sql — BPP (provider side) PostgreSQL schema
+--
+-- The BPP stores the catalog plus its own view of each transaction:
+--   - categories, providers, agents: the published catalog
+--   - contracts:                     provider's view of each Beckn transaction
+--   - executions:                    orchestrator tracking for delegated work
+--
+-- bap_id is TEXT (no FK) because the BAP lives in another network participant.
+-- agent_id / provider_id / execution_id are FKs because they reference rows
+-- inside this same BPP database.
 
 -- ─── Categories ─────────────────────────────────────────────
 CREATE TABLE categories (
@@ -25,17 +33,23 @@ CREATE TABLE providers (
 );
 
 -- ─── Agents (AgentFacts-compatible) ─────────────────────────
+-- capabilities stores the AgentFacts capabilities object:
+-- {modalities, streaming, batch, authentication}
 CREATE TABLE agents (
     id                  SERIAL PRIMARY KEY,
     provider_id         INTEGER NOT NULL REFERENCES providers(id),
     category_id         INTEGER NOT NULL REFERENCES categories(id),
+    beckn_id            TEXT UNIQUE,
+    agentfacts_id       TEXT,
+    agent_urn           TEXT,
+    label               TEXT,
     agent_name          JSONB NOT NULL DEFAULT '{}',
     description         TEXT,
     version             VARCHAR(20) NOT NULL DEFAULT '1.0.0',
     access_point_url    TEXT,
     interaction_type    VARCHAR(20) NOT NULL DEFAULT 'sync'
                         CHECK (interaction_type IN ('sync', 'async', 'streaming')),
-    capabilities        JSONB NOT NULL DEFAULT '[]',
+    capabilities        JSONB NOT NULL DEFAULT '{"modalities": ["text"], "streaming": false, "batch": false, "authentication": {"methods": ["jwt"]}}',
     skills              JSONB NOT NULL DEFAULT '[]',
     input_schema        JSONB NOT NULL DEFAULT '{}',
     output_schema       JSONB NOT NULL DEFAULT '{}',
@@ -43,8 +57,6 @@ CREATE TABLE agents (
     sla                 JSONB NOT NULL DEFAULT '{}',
     jurisdiction        VARCHAR(10),
     endpoints           JSONB NOT NULL DEFAULT '{"static": []}',
-    modalities          JSONB NOT NULL DEFAULT '["text"]',
-    authentication      JSONB NOT NULL DEFAULT '{"methods": ["jwt"]}',
     status              VARCHAR(20) NOT NULL DEFAULT 'active'
                         CHECK (status IN ('active', 'inactive', 'deprecated')),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -57,7 +69,7 @@ CREATE INDEX idx_agents_status ON agents(status);
 CREATE INDEX idx_agents_capabilities ON agents USING GIN (capabilities);
 CREATE INDEX idx_agents_skills ON agents USING GIN (skills);
 
--- ─── Contracts (Beckn v2 transaction lifecycle) ─────────────
+-- ─── Contracts (Beckn v2 transaction lifecycle — provider POV) ──
 CREATE TABLE contracts (
     id              SERIAL PRIMARY KEY,
     contract_code   TEXT NOT NULL UNIQUE,
@@ -65,8 +77,8 @@ CREATE TABLE contracts (
     message_id      TEXT,
     agent_id        INTEGER REFERENCES agents(id),
     provider_id     INTEGER REFERENCES providers(id),
-    bap_id          TEXT,
-    bpp_id          TEXT,
+    bap_id          TEXT,                       -- counterparty (no FK — lives in BAP)
+    bpp_id          TEXT,                       -- self (own BPP subscriber id)
     status          VARCHAR(20) NOT NULL DEFAULT 'DRAFT'
                     CHECK (status IN ('DRAFT', 'ACTIVE', 'COMPLETED', 'FAILED', 'CANCELLED')),
     commitments     JSONB NOT NULL DEFAULT '[]',
@@ -86,19 +98,7 @@ CREATE TABLE contracts (
 CREATE INDEX idx_contracts_transaction ON contracts(transaction_id);
 CREATE INDEX idx_contracts_status ON contracts(status);
 CREATE INDEX idx_contracts_agent ON contracts(agent_id);
-
--- ─── Callbacks (BAP-side on_* responses) ────────────────────
-CREATE TABLE callbacks (
-    id              SERIAL PRIMARY KEY,
-    transaction_id  TEXT NOT NULL,
-    action          VARCHAR(30) NOT NULL,
-    context         JSONB NOT NULL DEFAULT '{}',
-    message         JSONB NOT NULL DEFAULT '{}',
-    received_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_callbacks_transaction ON callbacks(transaction_id);
-CREATE INDEX idx_callbacks_action ON callbacks(action);
+CREATE INDEX idx_contracts_bap ON contracts(bap_id);
 
 -- ─── Executions (Orchestrator tracking) ─────────────────────
 CREATE TABLE executions (

@@ -65,18 +65,43 @@ services:
     networks:
       - beckn_network
 
-  postgres:
+  # BAP database — buyer side. Independent instance per Beckn v2 model:
+  # BAP and BPP are independent participants, so they keep separate state.
+  # Only services/bap/* connects here.
+  postgres-bap:
     image: postgres:16-alpine
     ports:
       - "5434:5432"
     environment:
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${BAP_DB_NAME}
+      - POSTGRES_USER=${BAP_DB_USER}
+      - POSTGRES_PASSWORD=${BAP_DB_PASSWORD}
     volumes:
-      - ./db/migrations:/docker-entrypoint-initdb.d/migrations
-      - ./db/init.sh:/docker-entrypoint-initdb.d/init.sh
-      - pgdata:/var/lib/postgresql/data
+      - ./db/bap/migrations:/docker-entrypoint-initdb.d/migrations
+      - ./db/bap/init.sh:/docker-entrypoint-initdb.d/init.sh
+      - pgdata-bap:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - beckn_network
+
+  # BPP database — provider side. Independent instance.
+  # Only services/bpp/* connects here.
+  postgres-bpp:
+    image: postgres:16-alpine
+    ports:
+      - "5435:5432"
+    environment:
+      - POSTGRES_DB=${BPP_DB_NAME}
+      - POSTGRES_USER=${BPP_DB_USER}
+      - POSTGRES_PASSWORD=${BPP_DB_PASSWORD}
+    volumes:
+      - ./db/bpp/migrations:/docker-entrypoint-initdb.d/migrations
+      - ./db/bpp/init.sh:/docker-entrypoint-initdb.d/init.sh
+      - pgdata-bpp:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -173,13 +198,13 @@ services:
       - PORT=3001
       - BAP_CALLER_URL=http://onix-bap:8081/bap/caller
       - SERVICE_NAME=bap-marketplace
-      - DB_HOST=postgres
+      - DB_HOST=postgres-bap
       - DB_PORT=5432
-      - DB_NAME=${POSTGRES_DB}
-      - DB_USER=${POSTGRES_USER}
-      - DB_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_NAME=${BAP_DB_NAME}
+      - DB_USER=${BAP_DB_USER}
+      - DB_PASSWORD=${BAP_DB_PASSWORD}
     depends_on:
-      postgres:
+      postgres-bap:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
@@ -210,15 +235,15 @@ services:
       - ORCHESTRATOR_URL=http://orchestrator:3003
       - SERVICE_NAME=bpp-provider
       - AGENT_URL_MAP={"agent-summarizer-001":"http://agents:3004","agent-code-reviewer-001":"http://agents:3004","agent-data-extractor-001":"http://agents:3004"}
-      - DB_HOST=postgres
+      - DB_HOST=postgres-bpp
       - DB_PORT=5432
-      - DB_NAME=${POSTGRES_DB}
-      - DB_USER=${POSTGRES_USER}
-      - DB_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_NAME=${BPP_DB_NAME}
+      - DB_USER=${BPP_DB_USER}
+      - DB_PASSWORD=${BPP_DB_PASSWORD}
     depends_on:
       orchestrator:
         condition: service_healthy
-      postgres:
+      postgres-bpp:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
@@ -384,7 +409,8 @@ services:
       - beckn_network
 
 volumes:
-  pgdata:
+  pgdata-bap:
+  pgdata-bpp:
 
 networks:
   beckn_network:
