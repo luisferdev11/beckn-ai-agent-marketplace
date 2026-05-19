@@ -19,8 +19,8 @@ from __future__ import annotations
 from app.db import repository as db
 
 
-async def store_callback(context: dict, message: dict):
-    await db.store_callback(context, message)
+async def store_callback(context: dict, message: dict, error: dict | None = None):
+    await db.store_callback(context, message, error)
 
 
 async def create_draft_contract(

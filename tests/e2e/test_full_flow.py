@@ -214,7 +214,7 @@ class TestBPPRejectsUnknownTransaction:
         assert cb is not None, f"on_{action} callback never reached the BAP"
 
         # 3. Beckn v2 error envelope must carry code 30002.
-        err = cb["message"].get("_error")
+        err = cb.get("error")
         assert err is not None, f"on_{action} arrived without error field — phantom success"
         assert err["code"] == "30002", f"unexpected error code: {err}"
 

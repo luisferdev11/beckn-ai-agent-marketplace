@@ -38,12 +38,16 @@ CREATE INDEX idx_contracts_status ON contracts(status);
 CREATE INDEX idx_contracts_bpp ON contracts(bpp_id);
 
 -- ─── Callbacks (BAP-side on_* responses) ────────────────────
+-- context / message / error are sibling top-level fields of the Beckn v2
+-- envelope. `error` is NULL on success and populated when the BPP returns
+-- an error response (e.g. unknown transaction → code 30002).
 CREATE TABLE callbacks (
     id              SERIAL PRIMARY KEY,
     transaction_id  TEXT NOT NULL,
     action          VARCHAR(30) NOT NULL,
     context         JSONB NOT NULL DEFAULT '{}',
     message         JSONB NOT NULL DEFAULT '{}',
+    error           JSONB,
     received_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

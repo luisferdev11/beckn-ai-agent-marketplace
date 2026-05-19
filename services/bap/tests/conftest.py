@@ -62,7 +62,7 @@ def fake_db(monkeypatch):
     async def _contract_exists(txn_id):
         return txn_id in contracts
 
-    async def _store_callback(context, message):
+    async def _store_callback(context, message, error=None):
         action = context.get("action", "unknown")
         txn_id = context.get("transactionId", "unknown")
         callbacks.append({
@@ -70,6 +70,7 @@ def fake_db(monkeypatch):
             "action": action,
             "context": context,
             "message": message,
+            "error": error,
         })
 
         if txn_id not in contracts:
