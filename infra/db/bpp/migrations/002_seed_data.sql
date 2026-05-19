@@ -1,33 +1,7 @@
--- 002_add_beckn_fields.sql
--- Add stable Beckn and AgentFacts identifiers; consolidate capabilities; seed demo agents.
-
--- ─── New identifier columns ──────────────────────────────────
-
--- beckn_id: resource ID used in Beckn protocol (e.g. "agent-summarizer-001")
-ALTER TABLE agents ADD COLUMN beckn_id TEXT UNIQUE;
-
--- agentfacts_id: the @id field in AgentFacts (e.g. "beckn-marketplace:summarizer-v1")
-ALTER TABLE agents ADD COLUMN agentfacts_id TEXT;
-
--- agent_urn: the agent_name URN field in AgentFacts
--- (e.g. "urn:agent:beckn-marketplace:LegalDocumentSummarizer")
-ALTER TABLE agents ADD COLUMN agent_urn TEXT;
-
--- label: primary human-readable name (English)
-ALTER TABLE agents ADD COLUMN label TEXT;
-
--- ─── Consolidate capabilities ────────────────────────────────
--- capabilities JSONB now stores the full AgentFacts capabilities object
--- {modalities, streaming, batch, authentication} instead of a tag list.
-UPDATE agents SET capabilities = jsonb_build_object(
-    'modalities', modalities,
-    'streaming', (interaction_type = 'streaming'),
-    'batch', false,
-    'authentication', authentication
-);
-
-ALTER TABLE agents DROP COLUMN modalities;
-ALTER TABLE agents DROP COLUMN authentication;
+-- 002_seed_data.sql
+-- Seed data for the BPP: demo category, demo provider, and 3 demo agents.
+-- Schema (including beckn_id, agentfacts_id, agent_urn, label, and the
+-- AgentFacts-shaped capabilities default) lives in 001_schema.sql.
 
 -- ─── Seed: category and provider ────────────────────────────
 INSERT INTO categories (name, display_name, description)

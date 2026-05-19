@@ -42,16 +42,26 @@ Spec oficial v2: `../protocol-specifications-v2/api/v2.0.0/beckn.yaml` (OpenAPI 
 │  └──────┬───────┘    └──────┬───────┘    └─────────────┘               │
 │         │                   │                                           │
 │  ┌──────▼───────┐    ┌──────▼───────┐                                  │
-│  │BAP-MARKET-   │    │ BPP-PROVIDER │                                   │
-│  │ (BAP)        │    │  (BPP)       │                                   │
-│  │ :3001        │    │  :3002       │                                   │
-│  │              │    │              │                                   │
-│  │ Lado compra- │    │ Catalogo de  │                                   │
-│  │ dor. Recibe  │    │ agentes IA.  │                                   │
-│  │ callbacks,   │    │ Maneja con-  │                                   │
-│  │ expone API   │    │ tratos, dele-│                                   │
-│  │ al frontend  │    │ ga ejecucion │                                   │
-│  └──────────────┘    └──────┬───────┘                                  `│
+│  │BAP-MARKET-   │◄┐  │ BPP-PROVIDER │┐                                  │
+│  │ (BAP)        │ │  │  (BPP)       ││                                  │
+│  │ :3001        │ │  │  :3002       ││                                  │
+│  │              │ │  │              ││                                  │
+│  │ Lado compra- │ │  │ Catalogo de  ││                                  │
+│  │ dor. Recibe  │ │  │ agentes IA.  ││                                  │
+│  │ callbacks,   │ │  │ Maneja con-  ││                                  │
+│  │ expone API   │ │  │ tratos, dele-││                                  │
+│  │ al frontend  │ │  │ ga ejecucion ││                                  │
+│  └──────────────┘ │  └──────┬───────┘│                                  │
+│                   │         │        │                                  │
+│         ┌─────────┘         │        └────────┐                         │
+│         ▼                   │                 ▼                         │
+│  ┌──────────────┐           │          ┌──────────────┐                 │
+│  │ POSTGRES-BAP │           │          │ POSTGRES-BPP │  BDs físicamente│
+│  │  :5434       │           │          │  :5435       │  separadas      │
+│  │ contracts,   │           │          │ catalog +    │  (Beckn v2:     │
+│  │ callbacks    │           │          │ contracts +  │  participantes  │
+│  │ (POV buyer)  │           │          │ executions   │  independientes)│
+│  └──────────────┘           │          └──────────────┘                 │
 │                             │                                           │
 │                      ┌──────▼───────┐                                   │
 │                      │ORCHESTRATOR  │                                   │
@@ -104,7 +114,7 @@ Cada paso: **ACK sincrono + callback on_* asincrono**.
 - **Modelos compartidos:** Pydantic v2 (`libs/beckn_models/`)
 - **Agentes IA:** Python (LangChain / CrewAI) — equipo separado
 - **Frontend:** React + Next.js (`services/frontend/`, puerto 3000)
-- **Infra:** Redis, Docker Compose. PostgreSQL en siguiente iteracion.
+- **Infra:** Redis, Docker Compose, **dos instancias PostgreSQL** (una por participante Beckn: `postgres-bap`, `postgres-bpp`).
 
 ## Estructura del proyecto
 
@@ -123,6 +133,9 @@ beckn-ai-agent-marketplace/
 ├── schemas/                      # Schemas del dominio AI (AgentFacts + execution result)
 ├── infra/
 │   ├── docker-compose.yml        # Un solo `docker compose up --build`
+│   ├── db/
+│   │   ├── bap/migrations/       # Schema y seed del postgres-bap (POV comprador)
+│   │   └── bpp/migrations/       # Schema y seed del postgres-bpp (POV proveedor)
 │   └── onix/                     # Configs ONIX (routing, llaves, plugins)
 ├── scripts/                      # Smoke tests y utilidades
 ├── docs/                         # Documentacion tecnica
@@ -134,7 +147,7 @@ beckn-ai-agent-marketplace/
 | Equipo | Carpeta | Servicio Docker | Puerto | Responsabilidad |
 |--------|---------|-----------------|--------|-----------------|
 | **Beckn/Protocol** | `services/bap/`, `services/bpp/`, `infra/` | `bap-marketplace`, `bpp-provider` | 3001, 3002 | Integracion Beckn v2, catalogo, contratos, API |
-| **Database** | `services/bap/app/db/`, `services/bpp/app/db/`, `libs/` | — | — | Persistencia (SQLite→Postgres), migraciones |
+| **Database** | `services/bap/app/db/`, `services/bpp/app/db/`, `infra/db/{bap,bpp}/` | `postgres-bap`, `postgres-bpp` | 5434, 5435 | Persistencia en PostgreSQL (BDs separadas por participante), migraciones |
 | **Orchestrator** | `services/orchestrator/` | `orchestrator` | 3003 | Orquestacion de agentes, colas, timeouts |
 | **Agentes IA** | `services/agents/` | `agents` | 3004 | Agentes reales (summarizer, code reviewer, etc.) |
 | **Frontend** | `services/frontend/` | `frontend` | 3000 | UI React + Next.js, consume API del BAP |
@@ -185,14 +198,21 @@ Usamos credenciales pre-registradas del starter kit:
 - Orchestrator conectado al BPP (fire & forget en confirm, polling en status)
 - `performanceAttributes` en `on_status` con datos reales: latencia, tokens, resultado del agente
 - `resourceAttributes` de los 3 agentes migrado a schema **AgentFacts** (NANDA compatible, `schemas/agentfacts-v1.json`)
+- **Persistencia en PostgreSQL con BDs físicamente separadas por participante Beckn:**
+  - `postgres-bap` (puerto 5434, volumen `pgdata-bap`) — solo accesible para `bap-marketplace`. Tablas: `contracts` (POV comprador, sin FKs a tablas BPP), `callbacks`.
+  - `postgres-bpp` (puerto 5435, volumen `pgdata-bpp`) — solo accesible para `bpp-provider`. Tablas: `categories`, `providers`, `agents`, `contracts` (POV proveedor, con FKs locales), `executions`.
+  - Credenciales separadas: `BAP_DB_*` / `BPP_DB_*` en `infra/.env`.
+  - Migraciones bajo `infra/db/bap/migrations/` y `infra/db/bpp/migrations/`.
+  - Cumple el modelo Beckn v2: cada participante mantiene su propio estado; el correlator entre lados es `transaction_id`, **no** una FK SQL.
 
 ### Pendiente
-- [ ] Persistencia en BD (in-memory actualmente — se pierde al reiniciar)
 - [ ] BAP dinamico (init/confirm deben usar datos del on_select almacenado)
 - [ ] Hospedar schema JSON-LD en URL publica (`raw.githubusercontent.com`) y re-habilitar `extendedSchema_enabled: true` en `infra/onix/bpp.yaml` BPP Caller
 - [ ] Publish de nuestro catalogo al CDS real (dev local: ya funciona via mock-network)
 - [ ] Discovery Service propio para produccion (dev local: discover va directo al BPP via mock-network)
 - [ ] Conectar agentes reales al orchestrator (actualmente reciben requests pero usan LLM real via Groq)
+- [ ] TLS (`sslmode=require`) en conexiones BAP/BPP → Postgres y secrets fuera de `.env` plano antes de producción (ver `docs/tech-debt-db-architecture.md`)
+- [ ] Migrar `bpp-serg` a su propio Postgres (hoy sigue in-memory; inconsistente con `bpp-provider`)
 
 ## Testing
 
