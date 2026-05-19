@@ -46,10 +46,12 @@ async def contract_exists(txn_id: str) -> bool:
     return row is not None
 
 
-async def store_callback(context: dict, message: dict):
+async def store_callback(context: dict, message: dict, error: dict | None = None):
     """Store an incoming on_* callback and update transaction contract state.
 
     The callback is always recorded in the `callbacks` table (audit log).
+    `error` is the top-level Beckn v2 envelope field (sibling of context /
+    message) and is stored in its own JSONB column — NULL on success.
     The `contracts` row is only updated if it already exists — callbacks for
     unknown transactions are logged as warnings and do NOT create phantom
     rows. See issue #12.
@@ -59,8 +61,11 @@ async def store_callback(context: dict, message: dict):
     txn_id = context.get("transactionId", "unknown")
 
     await pool.execute(
-        "INSERT INTO callbacks (transaction_id, action, context, message) VALUES ($1,$2,$3,$4)",
-        txn_id, action, json.dumps(context), json.dumps(message),
+        "INSERT INTO callbacks (transaction_id, action, context, message, error) "
+        "VALUES ($1,$2,$3,$4,$5)",
+        txn_id, action,
+        json.dumps(context), json.dumps(message),
+        json.dumps(error) if error is not None else None,
     )
 
     contract_data = message.get("contract", {})
