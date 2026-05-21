@@ -43,6 +43,7 @@ def _seed_agent(db_id: int, beckn_id: str, label: str, unit_price: float) -> dic
         "skills": [],
         "input_schema": {},
         "output_schema": {},
+        "model_provider": None,
         "endpoints": {"static": []},
     }
 

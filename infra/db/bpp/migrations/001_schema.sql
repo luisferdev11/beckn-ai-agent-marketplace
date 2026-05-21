@@ -53,6 +53,7 @@ CREATE TABLE agents (
     skills              JSONB NOT NULL DEFAULT '[]',
     input_schema        JSONB NOT NULL DEFAULT '{}',
     output_schema       JSONB NOT NULL DEFAULT '{}',
+    model_provider      TEXT,
     pricing_model       JSONB NOT NULL DEFAULT '{}',
     sla                 JSONB NOT NULL DEFAULT '{}',
     jurisdiction        VARCHAR(10),
