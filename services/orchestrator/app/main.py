@@ -16,6 +16,8 @@ from app.models import (
     ExecutionStatus,
     TokensUsed,
 )
+from app.planner import generate_plan
+from app.planner_models import Plan, PlanRequest
 
 app = FastAPI(
     title="AI Agent Orchestrator",
@@ -87,6 +89,16 @@ async def get_execution(execution_id: str):
     if record is None:
         raise HTTPException(status_code=404, detail=f"Execution {execution_id} not found")
     return _record_to_response(record)
+
+
+@app.post("/plan", response_model=Plan)
+async def create_plan(req: PlanRequest):
+    plan = await generate_plan(
+        prompt=req.prompt,
+        input_format=req.input_format,
+        output_format=req.output_format,
+    )
+    return plan
 
 
 @app.get("/health")
