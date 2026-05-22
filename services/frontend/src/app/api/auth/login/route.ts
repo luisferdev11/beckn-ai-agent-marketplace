@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import pool from "@/lib/db";
-import { verifyPassword, signToken } from "@/lib/auth";
+import { signToken } from "@/lib/auth";
+import { getByEmail } from "@/lib/mock-users";
 
 export async function POST(req: NextRequest) {
   const { email, password } = await req.json();
@@ -9,18 +9,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Credenciales requeridas" }, { status: 400 });
   }
 
-  const result = await pool.query(
-    "SELECT id, email, password_hash, role, subscription_status, provider_id FROM users WHERE email = $1",
-    [email]
-  );
-
-  if (!result.rows.length) {
-    return NextResponse.json({ error: "Credenciales inválidas" }, { status: 401 });
-  }
-
-  const user = result.rows[0];
-  const valid = await verifyPassword(password, user.password_hash);
-  if (!valid) {
+  const user = getByEmail(email);
+  if (!user || user.password !== password) {
     return NextResponse.json({ error: "Credenciales inválidas" }, { status: 401 });
   }
 

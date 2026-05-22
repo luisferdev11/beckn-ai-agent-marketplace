@@ -1,33 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
-import pool from "@/lib/db";
 import { requireAuth, signToken } from "@/lib/auth";
+import { allocateProviderId, update } from "@/lib/mock-users";
 
 export async function POST(req: NextRequest) {
   const user = await requireAuth(req);
   if (user instanceof Response) return user;
 
-  const { provider_id, new_provider, integration_mode } = await req.json();
+  const { provider_id, new_provider } = await req.json();
 
   let finalProviderId: number | null = provider_id ?? null;
+  let companyName: string | null = null;
 
   if (new_provider) {
-    const mode = integration_mode === "external" ? "external" : "managed";
-    const res = await pool.query(
-      `INSERT INTO providers (subscriber_id, bpp_uri, organization, integration_mode)
-       VALUES ($1, $2, $3, $4) RETURNING id`,
-      [new_provider.subscriber_id, new_provider.bpp_uri, JSON.stringify(new_provider.organization), mode]
-    );
-    finalProviderId = res.rows[0].id;
+    finalProviderId = allocateProviderId();
+    companyName = new_provider.organization?.name ?? null;
   }
 
-  await pool.query(
-    `UPDATE users SET role = 'publisher', subscription_status = 'active', provider_id = $1, updated_at = NOW() WHERE id = $2`,
-    [finalProviderId, user.id]
-  );
+  const updated = update(user.id, {
+    role: "publisher",
+    subscription_status: "active",
+    provider_id: finalProviderId,
+    company_name: companyName,
+  });
+
+  if (!updated) {
+    return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 });
+  }
 
   const token = await signToken({
-    id: user.id,
-    email: user.email,
+    id: updated.id,
+    email: updated.email,
     role: "publisher",
     subscription_status: "active",
     provider_id: finalProviderId,

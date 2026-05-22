@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import pool from "@/lib/db";
+import { getByEmail } from "@/lib/mock-users";
 
 export async function POST(req: NextRequest) {
   const { email } = await req.json();
   if (!email) return NextResponse.json({ error: "Email requerido" }, { status: 400 });
 
-  const result = await pool.query("SELECT id FROM users WHERE email = $1", [email]);
-  return NextResponse.json({ exists: result.rows.length > 0 });
+  return NextResponse.json({ exists: getByEmail(email) !== null });
 }
