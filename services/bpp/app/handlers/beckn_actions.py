@@ -490,7 +490,10 @@ async def handle_support(context: dict, message: dict) -> dict:
 
 
 ACTION_HANDLERS = {
-    "discover": handle_discover,
+    # `discover` removed (Pieza 2 of discover v2): the CDS at mock-network
+    # owns indexed discovery now. ONIX routes the BAP's discover action
+    # straight to the CDS, so the BPP no longer sees it. handle_discover
+    # is kept in this file for reference and tests but is unreachable.
     "select": handle_select,
     "init": handle_init,
     "confirm": handle_confirm,

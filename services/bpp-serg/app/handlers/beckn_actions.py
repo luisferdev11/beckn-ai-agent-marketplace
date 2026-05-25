@@ -399,7 +399,9 @@ async def handle_support(context: dict, message: dict) -> dict:
 
 # Action dispatcher
 ACTION_HANDLERS = {
-    "discover": handle_discover,
+    # `discover` removed (Pieza 2 of discover v2): the CDS at mock-network
+    # owns indexed discovery now. handle_discover stays in this file as
+    # reference but is unreachable from the dispatcher.
     "select": handle_select,
     "init": handle_init,
     "confirm": handle_confirm,

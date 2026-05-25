@@ -20,13 +20,14 @@ routingRules:
       - rate
       - support
 
-  # Discovery: routed to our local Discovery Service, which fans out to all
-  # registered BPPs. Each BPP responds with its own on_discover via the
-  # standard ONIX path back to the BAP.
+  # Discovery: routed to the CDS at mock-network (Pieza 2 of discover v2).
+  # CDS owns the catalog index built from catalog/publish; one query, one
+  # on_discover response with one catalog per BPP. The previous fan-out
+  # Discovery Service is deprecated — see services/discovery/.
   - domain: "beckn.one/testnet"
     version: "2.0.0"
     targetType: "url"
     target:
-      url: "http://discovery:3007/beckn"
+      url: "http://mock-network:8090/beckn"
     endpoints:
       - discover

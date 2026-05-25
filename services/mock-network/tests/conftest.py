@@ -304,3 +304,51 @@ def fake_embedder(monkeypatch):
     fake = _FakeEmbeddingService()
     monkeypatch.setattr(emb_service, "_default_service", fake)
     yield fake
+
+
+# ─── Discover (Pieza 2) fakes ───────────────────────────────────────
+
+
+@pytest.fixture
+def fake_discover_index(monkeypatch):
+    """In-memory candidate store for ``app.discover.query.retrieve_candidates``.
+
+    Not autouse — discover tests opt in by requesting the fixture and
+    seeding ``store.rows`` with the candidate dicts they want returned.
+    The fake honours the structured filters and respects the ``limit``
+    so tests can verify the route honours them too.
+    """
+    class _Store:
+        def __init__(self):
+            self.rows: list[dict] = []
+            self.last_query = None
+
+    store = _Store()
+
+    async def _retrieve(query, *, embedder=None):
+        store.last_query = query
+        filtered = []
+        f = query.filters
+        for row in store.rows:
+            if f.jurisdiction and row.get("jurisdiction") != f.jurisdiction:
+                continue
+            if f.languages and not set(f.languages).issubset(set(row.get("languages") or [])):
+                continue
+            if f.capabilities and not set(f.capabilities).issubset(set(row.get("capability_tags") or [])):
+                continue
+            if f.currency and row.get("pricing_currency") != f.currency:
+                continue
+            pv = row.get("pricing_value")
+            if f.max_price_value is not None and pv is not None and pv > f.max_price_value:
+                continue
+            ml = row.get("sla_max_latency_ms")
+            if f.max_latency_ms is not None and ml is not None and ml > f.max_latency_ms:
+                continue
+            filtered.append({**row, "similarity": row.get("similarity", 0.0)})
+        if query.text_search:
+            filtered.sort(key=lambda r: r.get("similarity", 0.0), reverse=True)
+        return filtered[: query.limit]
+
+    from app.discover import query as discover_query
+    monkeypatch.setattr(discover_query, "retrieve_candidates", _retrieve)
+    yield store

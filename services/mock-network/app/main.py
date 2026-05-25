@@ -1,11 +1,11 @@
 """Mock-network FastAPI entry point.
 
-Wires the logically independent surfaces (DeDi, Registry, Catalog,
-CDS operator) into a single ASGI app. Owns the Postgres pool lifecycle
-so each submodule can simply pull the pool when it needs it.
-
-After Pieza 1 the Catalog routes are real (publish + index). Discover
-arrives in Pieza 2 as a separate submodule.
+Wires every CDS-side surface into a single ASGI app:
+  - DeDi (signature lookups for ONIX)
+  - Registry (BAP/BPP onboarding state + liveness)
+  - Catalog (publish + index)
+  - Discover (semantic + filter retrieval over the index)
+  - CDS operator (stats)
 """
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from app.catalog.routes import router as catalog_router
 from app.config import SERVICE_NAME
 from app.db.pool import close_pool, get_pool
 from app.dedi.routes import router as dedi_router
+from app.discover.routes import router as discover_router
 from app.registry import liveness
 from app.registry.routes import router as registry_router
 
@@ -47,7 +48,7 @@ async def lifespan(_: FastAPI):
     )
     scheduler.start()
     logger.info(
-        "%s started — DeDi + Registry + Catalog publish; liveness probe every %ss",
+        "%s started — DeDi + Registry + Catalog + Discover; liveness probe every %ss",
         SERVICE_NAME, liveness.PROBE_INTERVAL_SECONDS,
     )
     try:
@@ -61,9 +62,8 @@ app = FastAPI(
     title="Mock Beckn Network",
     version="2.0.0",
     description=(
-        "Local stand-in for the Beckn network services we cannot run with "
-        "our own identities: DeDi (signature lookups), Registry (BPP/BAP "
-        "onboarding state), CDS catalog publish + index."
+        "Local stand-in for the Beckn network services: DeDi, Registry, "
+        "CDS catalog/publish, CDS discover (indexed)."
     ),
     lifespan=lifespan,
 )
@@ -81,4 +81,5 @@ async def health():
 app.include_router(dedi_router)
 app.include_router(registry_router)
 app.include_router(catalog_router)
+app.include_router(discover_router)
 app.include_router(cds_operator_router)
