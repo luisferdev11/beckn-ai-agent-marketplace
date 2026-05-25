@@ -1,0 +1,611 @@
+{
+  "info": {
+    "name": "Marketplace Discover v2",
+    "description": "Postman collection for **manually testing the Discover/Registry/Catalog services** of the Beckn AI Agent Marketplace.\n\nCovers:\n- **mock-network (CDS + Registry + DeDi)** at `{{mocknet_url}}` — local stand-in for DeDi/CDS in dev\n- **BAP marketplace** at `{{bap_url}}` — user-facing entry point\n- **BPP-tecla** at `{{bpp_tecla_url}}` and **BPP-serg** at `{{bpp_serg_url}}` — provider backends\n\n## How to use\n1. `docker compose up --build` from `beckn-ai-agent-marketplace/infra/`.\n2. (Optional) Seed mock agents: `python infra/mocks/seed_mock_agents.py`.\n3. Import this collection in Postman.\n4. Run requests in the order of the folders (`00 → 06`).\n5. After running a discover/select, copy the returned `transactionId` into the `txn_id` collection variable to query callbacks.\n\n## Beckn v2 reminders\n- Action verbs: `discover` (NOT search), `catalog/publish`, `select`, `init`, `confirm`, `status`, `cancel`, `rate`.\n- Resource model: `Contract` (NOT Order). AgentFacts v1 lives inside `resourceAttributes`.\n- Context is required on every Beckn envelope (`networkId`, `action`, `version=2.0.0`, `bapId/bapUri/bppId/bppUri`, `transactionId`, `messageId`, `timestamp`, `ttl`).\n\nSchema: Postman Collection v2.1.0.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "mocknet_url", "value": "http://localhost:8090", "description": "Mock Beckn Network: DeDi + Registry + CDS stub" },
+    { "key": "bap_url", "value": "http://localhost:3001", "description": "BAP marketplace (user-facing)" },
+    { "key": "bpp_tecla_url", "value": "http://localhost:3002", "description": "BPP Tecla — reference provider backend" },
+    { "key": "bpp_serg_url", "value": "http://localhost:3005", "description": "BPP Serg — second provider backend" },
+    { "key": "subscriber_id", "value": "bpp.example.com", "description": "Subscriber id used by registry CRUD requests" },
+    { "key": "txn_id", "value": "", "description": "Transaction id — paste from a discover/select response to query callbacks" }
+  ],
+  "item": [
+    {
+      "name": "00 — Health",
+      "description": "Liveness probes for every service in the stack.",
+      "item": [
+        {
+          "name": "mock-network /health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{mocknet_url}}/health",
+              "host": ["{{mocknet_url}}"],
+              "path": ["health"]
+            },
+            "description": "Liveness for the mock Beckn network (DeDi + Registry + CDS).\n\n**Expected:** `200 OK` with `{\"status\": \"ok\", \"service\": \"...\", \"time\": \"...\"}`."
+          },
+          "response": []
+        },
+        {
+          "name": "BAP /health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bap_url}}/health",
+              "host": ["{{bap_url}}"],
+              "path": ["health"]
+            },
+            "description": "Liveness for the BAP marketplace backend.\n\n**Expected:** `200 OK` with `{\"status\": \"ok\", ...}`."
+          },
+          "response": []
+        },
+        {
+          "name": "BPP Tecla /health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bpp_tecla_url}}/health",
+              "host": ["{{bpp_tecla_url}}"],
+              "path": ["health"]
+            },
+            "description": "Liveness for BPP Tecla.\n\n**Expected:** `200 OK` with `{\"status\": \"ok\", \"service\": \"bpp-tecla\" | similar, \"database\": \"connected\"}`."
+          },
+          "response": []
+        },
+        {
+          "name": "BPP Serg /health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bpp_serg_url}}/health",
+              "host": ["{{bpp_serg_url}}"],
+              "path": ["health"]
+            },
+            "description": "Liveness for BPP Serg.\n\n**Expected:** `200 OK` with `{\"status\": \"ok\", \"service\": \"bpp-serg\"}`."
+          },
+          "response": []
+        },
+        {
+          "name": "CDS stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{mocknet_url}}/cds/stats",
+              "host": ["{{mocknet_url}}"],
+              "path": ["cds", "stats"]
+            },
+            "description": "Operator-only view of the mock CDS index.\n\n**Expected:** `200 OK` with `{\"index\": {\"current_agents_total\": N}}` where N is the number of currently-indexed agents.\n\nUseful to verify a `catalog/publish` actually landed (re-run after publishing)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "01 — Registry (admin)",
+      "description": "CRUD against the mock Registry. There is **no auth** in this MVP — the endpoints assume an internal network boundary.\n\nTypical flow: create a subscriber → list → get by id → patch → soft-delete.",
+      "item": [
+        {
+          "name": "Create subscriber (BPP)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subscriber_id\": \"{{subscriber_id}}\",\n  \"role\": \"BPP\",\n  \"endpoint_url\": \"http://onix-bpp:8082/bpp/receiver\",\n  \"backend_health_url\": \"http://bpp-provider:3002/health\",\n  \"public_key\": \"BASE64_ED25519_PUBLIC_KEY_PLACEHOLDER==\",\n  \"organization\": {\n    \"name\": \"Beckn AI Marketplace — Tecla Ops\",\n    \"shortDesc\": \"Reference BPP for AI agents\"\n  },\n  \"jurisdiction\": \"IND\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{mocknet_url}}/registry/subscribers",
+              "host": ["{{mocknet_url}}"],
+              "path": ["registry", "subscribers"]
+            },
+            "description": "Register a BPP in the mock registry.\n\n**Expected on success:** `201 Created` with the full subscriber row (status defaults to `active`, health defaults to `unknown` until the liveness probe runs).\n\n**Expected on duplicate:** `409 Conflict` with `{\"detail\": {\"error\": \"subscriber_already_exists\", \"subscriber_id\": \"...\"}}`."
+          },
+          "response": []
+        },
+        {
+          "name": "List subscribers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{mocknet_url}}/registry/subscribers?role=BPP&status_filter=active",
+              "host": ["{{mocknet_url}}"],
+              "path": ["registry", "subscribers"],
+              "query": [
+                { "key": "role", "value": "BPP", "description": "Optional. One of BAP|BPP|CDS|DS" },
+                { "key": "status_filter", "value": "active", "description": "Optional. One of pending_kyc|active|suspended|deprecated" }
+              ]
+            },
+            "description": "List subscribers, optionally filtered by `role` and `status_filter`.\n\n**Expected:** `200 OK` with an array of subscriber objects. Remove the query params to list everything."
+          },
+          "response": []
+        },
+        {
+          "name": "Get subscriber by id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{mocknet_url}}/registry/subscribers/{{subscriber_id}}",
+              "host": ["{{mocknet_url}}"],
+              "path": ["registry", "subscribers", "{{subscriber_id}}"]
+            },
+            "description": "Fetch one subscriber by `subscriber_id`.\n\n**Expected:** `200 OK` with the subscriber row, or `404` if not found."
+          },
+          "response": []
+        },
+        {
+          "name": "Patch subscriber",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"suspended\",\n  \"organization\": {\n    \"name\": \"Beckn AI Marketplace — Tecla Ops\",\n    \"shortDesc\": \"Reference BPP for AI agents (suspended pending KYC review)\"\n  },\n  \"jurisdiction\": \"IND\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{mocknet_url}}/registry/subscribers/{{subscriber_id}}",
+              "host": ["{{mocknet_url}}"],
+              "path": ["registry", "subscribers", "{{subscriber_id}}"]
+            },
+            "description": "Partial update. Accepted fields: `status`, `organization`, `jurisdiction`, `kyc_data`, `endpoint_url`, `public_key`, `backend_health_url`.\n\n`health`, `last_seen_at`, `consecutive_failures` are owned by the liveness probe and cannot be patched here.\n\n**Expected:** `200 OK` with the updated row, or `404`, or `400` if body is empty."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete subscriber (soft)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{mocknet_url}}/registry/subscribers/{{subscriber_id}}",
+              "host": ["{{mocknet_url}}"],
+              "path": ["registry", "subscribers", "{{subscriber_id}}"]
+            },
+            "description": "Soft-delete: sets `status='deprecated'`. Idempotent — calling on an already-deprecated subscriber returns the same row.\n\n**Expected:** `200 OK` with the row (status=deprecated), or `404`."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "02 — CDS catalog/publish",
+      "description": "Publish a Beckn v2 catalog to the mock CDS. The endpoint returns ACK synchronously and runs the indexing pipeline asynchronously; an `on_publish` callback is delivered to the BPP once indexing finishes.\n\nUse this folder to push a hand-crafted catalog. To push the BPP's real catalog, use the BPP's `/api/publish` request in folder `05`.",
+      "item": [
+        {
+          "name": "catalog/publish (1 agent, AgentFacts v1)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('ACK received', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.message.ack.status).to.eql('ACK');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"context\": {\n    \"networkId\": \"beckn.one/testnet\",\n    \"action\": \"catalog/publish\",\n    \"version\": \"2.0.0\",\n    \"bapId\": \"{{subscriber_id}}\",\n    \"bapUri\": \"http://onix-bpp:8082/bpp/receiver\",\n    \"bppId\": \"{{subscriber_id}}\",\n    \"bppUri\": \"http://onix-bpp:8082/bpp/receiver\",\n    \"transactionId\": \"{{$guid}}\",\n    \"messageId\": \"{{$guid}}\",\n    \"timestamp\": \"{{$isoTimestamp}}\",\n    \"ttl\": \"PT30S\"\n  },\n  \"message\": {\n    \"catalogs\": [\n      {\n        \"id\": \"catalog-{{subscriber_id}}\",\n        \"descriptor\": {\n          \"name\": \"Beckn AI Marketplace — AI Agents\",\n          \"shortDesc\": \"Catalog with 1 AI agent\"\n        },\n        \"provider\": {\n          \"id\": \"{{subscriber_id}}\",\n          \"descriptor\": {\n            \"name\": \"Tecla Ops\",\n            \"shortDesc\": \"Reference provider\"\n          }\n        },\n        \"resources\": [\n          {\n            \"id\": \"beckn-marketplace:summarizer-v1\",\n            \"descriptor\": {\n              \"name\": \"Document Summarizer\",\n              \"shortDesc\": \"Summarizes long-form documents in multiple languages.\",\n              \"longDesc\": \"Document Summarizer — Reads PDF/Text inputs and produces faithful extractive + abstractive summaries with citations. Supports en/es/hi.\"\n            },\n            \"resourceAttributes\": {\n              \"@context\": \"https://raw.githubusercontent.com/danielctecla/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json\",\n              \"@type\": \"beckn:AIAgentService\",\n              \"id\": \"beckn-marketplace:summarizer-v1\",\n              \"agent_name\": \"urn:agent:beckn-marketplace:DocumentSummarizer\",\n              \"label\": \"Document Summarizer\",\n              \"description\": \"Summarizes legal, medical, and financial documents in multiple languages.\",\n              \"version\": \"1.0.0\",\n              \"jurisdiction\": \"IND\",\n              \"provider\": {\n                \"name\": \"Tecla Ops\",\n                \"url\": \"https://tecla.example.com\"\n              },\n              \"endpoints\": {\n                \"static\": [\"http://onix-bpp:8082/bpp/receiver\"]\n              },\n              \"capabilities\": {\n                \"modalities\": [\"text\"],\n                \"streaming\": false,\n                \"batch\": true,\n                \"authentication\": {\n                  \"methods\": [\"jwt\"]\n                }\n              },\n              \"skills\": [\n                {\n                  \"id\": \"summarize-legal\",\n                  \"description\": \"Summarize legal documents in Hindi or English\",\n                  \"inputModes\": [\"text\", \"pdf\"],\n                  \"outputModes\": [\"text\", \"json\"],\n                  \"supportedLanguages\": [\"en\", \"hi\", \"es\"],\n                  \"latencyBudgetMs\": 4000,\n                  \"maxTokens\": 8000\n                }\n              ],\n              \"sla\": {\n                \"maxLatencyMs\": 5000,\n                \"accuracy\": 0.92,\n                \"uptime\": 0.995\n              },\n              \"pricing\": {\n                \"currency\": \"INR\",\n                \"value\": 5.0,\n                \"model\": \"per_call\"\n              }\n            }\n          }\n        ],\n        \"offers\": [\n          {\n            \"id\": \"offer-beckn-marketplace:summarizer-v1\",\n            \"descriptor\": { \"name\": \"Document Summarizer\" },\n            \"resourceIds\": [\"beckn-marketplace:summarizer-v1\"],\n            \"provider\": {\n              \"id\": \"{{subscriber_id}}\",\n              \"descriptor\": {\n                \"name\": \"Tecla Ops\",\n                \"shortDesc\": \"Reference provider\"\n              }\n            }\n          }\n        ]\n      }\n    ]\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{mocknet_url}}/beckn/catalog/publish",
+              "host": ["{{mocknet_url}}"],
+              "path": ["beckn", "catalog", "publish"]
+            },
+            "description": "Publish a hand-crafted Beckn v2 catalog with 1 resource containing **AgentFacts v1** in `resourceAttributes`.\n\n**Sync response:** `{\"message\": {\"ack\": {\"status\": \"ACK\"}}}`.\n**Async:** the CDS will POST `on_publish` to the BPP's webhook once indexing completes.\n\nVerify the agent landed via `00 — Health → CDS stats` (current_agents_total should go up).\n\n**Common rejections:**\n- `EMPTY_CATALOG` if `message.catalogs` is empty/missing.\n- `INVALID_JSON` if the body is malformed.\n- Bad AgentFacts → indexing rejects the resource but the request still ACKs."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "03 — CDS discover (semantic + filters)",
+      "description": "Hit the mock CDS discover endpoint directly with raw Beckn v2 envelopes.\n\n**Precedence for text:**\n1. `message.intent.textSearch` (spec)\n2. `context.schemaContext` joined by spaces (BAP backwards-compat)\n3. Empty → returns most-recently-published agents.\n\n**Supported filters** (`message.intent.filters`):\n- `jurisdiction`, `languages[]`, `capabilities[]`, `currency`, `max_price_value`, `max_latency_ms`.\n\nAll discover requests return ACK synchronously; the `on_discover` callback is POSTed to the BAP's webhook asynchronously.",
+      "item": [
+        {
+          "name": "discover (all — empty intent)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"context\": {\n    \"networkId\": \"beckn.one/testnet\",\n    \"action\": \"discover\",\n    \"version\": \"2.0.0\",\n    \"bapId\": \"bap.example.com\",\n    \"bapUri\": \"http://onix-bap:8081/bap/receiver\",\n    \"bppId\": \"\",\n    \"bppUri\": \"\",\n    \"transactionId\": \"{{$guid}}\",\n    \"messageId\": \"{{$guid}}\",\n    \"timestamp\": \"{{$isoTimestamp}}\",\n    \"ttl\": \"PT30S\"\n  },\n  \"message\": {\n    \"intent\": {}\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{mocknet_url}}/beckn/discover",
+              "host": ["{{mocknet_url}}"],
+              "path": ["beckn", "discover"]
+            },
+            "description": "Discover with an empty intent. Returns the most-recently-published agents (up to default limit = 20).\n\n**bppId/bppUri are left empty** because discover is broadcast — it doesn't target a specific BPP.\n\n**Expected sync response:** `200 OK` with `{\"message\": {\"ack\": {\"status\": \"ACK\"}}}`."
+          },
+          "response": []
+        },
+        {
+          "name": "discover (textSearch — semantic)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"context\": {\n    \"networkId\": \"beckn.one/testnet\",\n    \"action\": \"discover\",\n    \"version\": \"2.0.0\",\n    \"bapId\": \"bap.example.com\",\n    \"bapUri\": \"http://onix-bap:8081/bap/receiver\",\n    \"bppId\": \"\",\n    \"bppUri\": \"\",\n    \"transactionId\": \"{{$guid}}\",\n    \"messageId\": \"{{$guid}}\",\n    \"timestamp\": \"{{$isoTimestamp}}\",\n    \"ttl\": \"PT30S\"\n  },\n  \"message\": {\n    \"intent\": {\n      \"textSearch\": \"summarize legal documents in Hindi\"\n    }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{mocknet_url}}/beckn/discover",
+              "host": ["{{mocknet_url}}"],
+              "path": ["beckn", "discover"]
+            },
+            "description": "Semantic prompt search via `message.intent.textSearch` (Beckn v2 spec).\n\nThe CDS computes a query embedding and ranks the index by cosine similarity. Returns top-N matches in the `on_discover` callback to the BAP."
+          },
+          "response": []
+        },
+        {
+          "name": "discover (filters — jurisdiction + price ceiling)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"context\": {\n    \"networkId\": \"beckn.one/testnet\",\n    \"action\": \"discover\",\n    \"version\": \"2.0.0\",\n    \"bapId\": \"bap.example.com\",\n    \"bapUri\": \"http://onix-bap:8081/bap/receiver\",\n    \"bppId\": \"\",\n    \"bppUri\": \"\",\n    \"transactionId\": \"{{$guid}}\",\n    \"messageId\": \"{{$guid}}\",\n    \"timestamp\": \"{{$isoTimestamp}}\",\n    \"ttl\": \"PT30S\"\n  },\n  \"message\": {\n    \"intent\": {\n      \"filters\": {\n        \"jurisdiction\": \"IND\",\n        \"max_price_value\": 10\n      }\n    }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{mocknet_url}}/beckn/discover",
+              "host": ["{{mocknet_url}}"],
+              "path": ["beckn", "discover"]
+            },
+            "description": "Structured-filter discover: only agents in `IND` jurisdiction with per-call price ≤ 10 (in whatever currency they declared)."
+          },
+          "response": []
+        },
+        {
+          "name": "discover (textSearch + filters combined)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"context\": {\n    \"networkId\": \"beckn.one/testnet\",\n    \"action\": \"discover\",\n    \"version\": \"2.0.0\",\n    \"bapId\": \"bap.example.com\",\n    \"bapUri\": \"http://onix-bap:8081/bap/receiver\",\n    \"bppId\": \"\",\n    \"bppUri\": \"\",\n    \"transactionId\": \"{{$guid}}\",\n    \"messageId\": \"{{$guid}}\",\n    \"timestamp\": \"{{$isoTimestamp}}\",\n    \"ttl\": \"PT30S\"\n  },\n  \"message\": {\n    \"intent\": {\n      \"textSearch\": \"extract structured data from invoices\",\n      \"filters\": {\n        \"jurisdiction\": \"IND\",\n        \"languages\": [\"en\", \"hi\"],\n        \"capabilities\": [\"text\"],\n        \"currency\": \"INR\",\n        \"max_price_value\": 20,\n        \"max_latency_ms\": 6000\n      }\n    }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{mocknet_url}}/beckn/discover",
+              "host": ["{{mocknet_url}}"],
+              "path": ["beckn", "discover"]
+            },
+            "description": "Combine semantic ranking (`textSearch`) with hard constraints (`filters`).\n\nResults are: agents that satisfy ALL the filter constraints, ordered by semantic similarity to the textSearch."
+          },
+          "response": []
+        },
+        {
+          "name": "discover (with limit)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"context\": {\n    \"networkId\": \"beckn.one/testnet\",\n    \"action\": \"discover\",\n    \"version\": \"2.0.0\",\n    \"bapId\": \"bap.example.com\",\n    \"bapUri\": \"http://onix-bap:8081/bap/receiver\",\n    \"bppId\": \"\",\n    \"bppUri\": \"\",\n    \"transactionId\": \"{{$guid}}\",\n    \"messageId\": \"{{$guid}}\",\n    \"timestamp\": \"{{$isoTimestamp}}\",\n    \"ttl\": \"PT30S\"\n  },\n  \"message\": {\n    \"intent\": {\n      \"textSearch\": \"AI agents\",\n      \"limit\": 5\n    }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{mocknet_url}}/beckn/discover",
+              "host": ["{{mocknet_url}}"],
+              "path": ["beckn", "discover"]
+            },
+            "description": "Use `intent.limit` to cap the number of results in the `on_discover` callback.\n\nAllowed range: 1–100. Default: 20."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "04 — BAP user-facing discover",
+      "description": "Endpoints intended to be consumed by the frontend or by a human via Postman. The BAP wraps the inbound JSON into a Beckn v2 envelope and forwards through ONIX-BAP to the CDS.\n\nUse `txn_id` collection variable to query callbacks once they arrive.",
+      "item": [
+        {
+          "name": "discover (all — empty body)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "const json = pm.response.json();",
+                  "if (json && json.transactionId) {",
+                  "    pm.collectionVariables.set('txn_id', json.transactionId);",
+                  "    console.log('Saved txn_id: ' + json.transactionId);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{bap_url}}/api/contracts/discover",
+              "host": ["{{bap_url}}"],
+              "path": ["api", "contracts", "discover"]
+            },
+            "description": "Discover everything. No filters, no query — the BAP issues an empty-intent discover.\n\n**Response:** `{\"transactionId\": \"...\", \"onix_response\": {...}}`. The test script saves `transactionId` to the `txn_id` collection variable for the callbacks requests below."
+          },
+          "response": []
+        },
+        {
+          "name": "discover (text query — schemaContext path)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "const json = pm.response.json();",
+                  "if (json && json.transactionId) {",
+                  "    pm.collectionVariables.set('txn_id', json.transactionId);",
+                  "    console.log('Saved txn_id: ' + json.transactionId);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"summarize Hindi legal documents\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{bap_url}}/api/contracts/discover",
+              "host": ["{{bap_url}}"],
+              "path": ["api", "contracts", "discover"]
+            },
+            "description": "Today's path: the BAP splits the `query` into tokens and stuffs them into `context.schemaContext`, then issues a JSONPath `$.catalogs[*].resources[*]` intent. The CDS falls back to schemaContext when `textSearch` is absent.\n\nKept here while the `intent_text` migration finishes."
+          },
+          "response": []
+        },
+        {
+          "name": "discover (intent_text — semantic prompt, new path)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "const json = pm.response.json();",
+                  "if (json && json.transactionId) {",
+                  "    pm.collectionVariables.set('txn_id', json.transactionId);",
+                  "    console.log('Saved txn_id: ' + json.transactionId);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"intent_text\": \"find me agents that can extract structured data from invoices in Spanish\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{bap_url}}/api/contracts/discover",
+              "host": ["{{bap_url}}"],
+              "path": ["api", "contracts", "discover"]
+            },
+            "description": "**Preferred path going forward.** `intent_text` is a free-form natural-language prompt; the BAP forwards it as `message.intent.textSearch` in the Beckn envelope so the CDS can do semantic ranking end-to-end.\n\n_Note: this field is being added concurrently to the BAP — if your branch does not have it yet, the request still ACKs but the field is ignored. Use `query` (request above) as a fallback._"
+          },
+          "response": []
+        },
+        {
+          "name": "discover (legacy filter style)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "const json = pm.response.json();",
+                  "if (json && json.transactionId) {",
+                  "    pm.collectionVariables.set('txn_id', json.transactionId);",
+                  "    console.log('Saved txn_id: ' + json.transactionId);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"category\": \"code-review\",\n  \"capabilities\": [\"python\"]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{bap_url}}/api/contracts/discover",
+              "host": ["{{bap_url}}"],
+              "path": ["api", "contracts", "discover"]
+            },
+            "description": "Legacy keyword-based discover. `category` and `capabilities[]` are concatenated into `context.schemaContext` along with any `query` tokens.\n\nKept for compatibility with existing frontend code; new code should prefer `intent_text`."
+          },
+          "response": []
+        },
+        {
+          "name": "callbacks for txn",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bap_url}}/api/callbacks?transaction_id={{txn_id}}",
+              "host": ["{{bap_url}}"],
+              "path": ["api", "callbacks"],
+              "query": [{ "key": "transaction_id", "value": "{{txn_id}}", "description": "Transaction id from a discover/select response" }]
+            },
+            "description": "List all callbacks received for a given transaction.\n\n**Setup:** run a discover request above first — the test scripts save `transactionId` to `txn_id` automatically. Or paste a transactionId into the `txn_id` collection variable manually.\n\n**Expected:** `200 OK` with an array of callback objects (one per `on_*` received)."
+          },
+          "response": []
+        },
+        {
+          "name": "last callback for txn",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bap_url}}/api/callbacks/ultimo?transaction_id={{txn_id}}",
+              "host": ["{{bap_url}}"],
+              "path": ["api", "callbacks", "ultimo"],
+              "query": [{ "key": "transaction_id", "value": "{{txn_id}}" }]
+            },
+            "description": "Return the most-recent callback for a given transaction. Useful for asserting `on_discover` actually landed.\n\n**Expected:** `200 OK` with a single callback object."
+          },
+          "response": []
+        },
+        {
+          "name": "transaction record",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bap_url}}/api/transactions/{{txn_id}}",
+              "host": ["{{bap_url}}"],
+              "path": ["api", "transactions", "{{txn_id}}"]
+            },
+            "description": "Fetch the BAP-side transaction row by transactionId.\n\n**Expected:** `200 OK` with the transaction and its callbacks, or `404` if the BAP has not seen this txn (e.g. it was issued before the BAP started)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "05 — BPP probes",
+      "description": "Direct probes against the two BPP backends. Use these to inspect each BPP's catalog and trigger its publish flow.",
+      "item": [
+        {
+          "name": "Tecla — current catalog",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bpp_tecla_url}}/api/catalog",
+              "host": ["{{bpp_tecla_url}}"],
+              "path": ["api", "catalog"]
+            },
+            "description": "Read Tecla's current catalog (active agents only). Useful before publishing to confirm what will be pushed to the CDS.\n\n**Expected:** `200 OK` with `{\"resources\": [...], \"total\": N}` where each resource embeds AgentFacts v1 in `resourceAttributes`."
+          },
+          "response": []
+        },
+        {
+          "name": "Tecla — publish to CDS",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{bpp_tecla_url}}/api/publish",
+              "host": ["{{bpp_tecla_url}}"],
+              "path": ["api", "publish"]
+            },
+            "description": "Build a Beckn `catalog/publish` envelope from Tecla's active agents and POST it through ONIX-BPP to the CDS.\n\n**Expected:** `{\"status\": \"sent\", \"fabric\": {\"catalogPublished\": true, \"ack\": \"ACK\", \"agentsInCatalog\": N}, \"transactionId\": \"...\"}`.\n\nIf the catalog is empty (no active agents): `{\"status\": \"empty\", \"message\": \"No active agents to publish\"}`."
+          },
+          "response": []
+        },
+        {
+          "name": "Tecla — select webhook (raw envelope)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"context\": {\n    \"networkId\": \"beckn.one/testnet\",\n    \"action\": \"select\",\n    \"version\": \"2.0.0\",\n    \"bapId\": \"bap.example.com\",\n    \"bapUri\": \"http://onix-bap:8081/bap/receiver\",\n    \"bppId\": \"bpp.example.com\",\n    \"bppUri\": \"http://onix-bpp:8082/bpp/receiver\",\n    \"transactionId\": \"{{$guid}}\",\n    \"messageId\": \"{{$guid}}\",\n    \"timestamp\": \"{{$isoTimestamp}}\",\n    \"ttl\": \"PT30S\"\n  },\n  \"message\": {\n    \"contract\": {\n      \"id\": \"draft-contract-postman\",\n      \"participants\": [\n        {\n          \"id\": \"participant-buyer-postman\",\n          \"descriptor\": { \"name\": \"Postman Buyer\", \"code\": \"buyer\" }\n        }\n      ],\n      \"commitments\": [\n        {\n          \"id\": \"commitment-postman\",\n          \"descriptor\": { \"name\": \"Document Summarizer\", \"code\": \"AI-SUMMARIZATION\" },\n          \"status\": { \"code\": \"DRAFT\" },\n          \"resources\": [\n            {\n              \"id\": \"beckn-marketplace:summarizer-v1\",\n              \"descriptor\": { \"name\": \"Document Summarizer\", \"code\": \"AI-SUMMARIZATION\" },\n              \"quantity\": { \"unitQuantity\": 1, \"unitCode\": \"EXECUTION\" }\n            }\n          ],\n          \"offer\": {\n            \"id\": \"offer-beckn-marketplace:summarizer-v1\",\n            \"resourceIds\": [\"beckn-marketplace:summarizer-v1\"]\n          }\n        }\n      ]\n    }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{bpp_tecla_url}}/api/webhook/select",
+              "host": ["{{bpp_tecla_url}}"],
+              "path": ["api", "webhook", "select"]
+            },
+            "description": "Bypass ONIX and hit Tecla's `select` webhook directly with a minimal valid Beckn envelope. **Only use this for debugging** — in production this path is owned by ONIX-BPP after signature verification.\n\n**Expected:** `200 OK` with an ACK; Tecla will dispatch `on_select` asynchronously back through ONIX-BPP to the BAP."
+          },
+          "response": []
+        },
+        {
+          "name": "Serg — publish to CDS",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{bpp_serg_url}}/api/publish",
+              "host": ["{{bpp_serg_url}}"],
+              "path": ["api", "publish"]
+            },
+            "description": "Same shape as Tecla's publish: build the envelope from Serg's active agents and push to the mock CDS via ONIX-BPP.\n\n**Expected:** `{\"status\": \"sent\", \"fabric\": {...}, \"transactionId\": \"...\"}` or `{\"status\": \"empty\", ...}`."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "06 — Seeding helper (docs)",
+      "description": "Reference notes — these are not HTTP requests, just docs for the operator.",
+      "item": [
+        {
+          "name": "Seed mock catalog (CLI, not HTTP)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{mocknet_url}}/cds/stats",
+              "host": ["{{mocknet_url}}"],
+              "path": ["cds", "stats"]
+            },
+            "description": "**This is documentation, not an HTTP request to run.** (The URL points at CDS stats so a stray Send is harmless.)\n\nTo seed the mock CDS with the demo catalog (a handful of agents with realistic AgentFacts), run from the project root:\n\n```bash\npython infra/mocks/seed_mock_agents.py\n```\n\nThis script:\n1. Reads canned agent definitions from `infra/mocks/`.\n2. POSTs `catalog/publish` envelopes to `{{mocknet_url}}/beckn/catalog/publish`.\n3. Waits for `on_publish` callbacks (if a BPP webhook is reachable).\n\nVerify success by hitting `00 — Health → CDS stats` — `index.current_agents_total` should match the number of seeded agents.\n\n**After seeding**, run any discover request from folder `03` or `04` to confirm the agents are searchable."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
