@@ -203,6 +203,35 @@
       }
     },
 
+    "pricing": {
+      "type": "object",
+      "description": "Per-call pricing declared by the provider. Used by the BPP to compute on_select consideration and surfaced by discover for buyer-side filtering. Added by us — not in AgentFacts base.",
+      "additionalProperties": false,
+      "properties": {
+        "currency": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 3,
+          "description": "ISO 4217 currency code. e.g. 'INR', 'MXN', 'USD'"
+        },
+        "value": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Per-call base price, before taxes"
+        },
+        "unitPrice": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Alias for value, kept for backwards compatibility"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Pricing model identifier. Common values: per_call, per_task, per_token, per_minute, subscription, free. Not enumerated because the marketplace taxonomy is still evolving and BPPs may publish custom models."
+        }
+      }
+    },
+
     "evaluations": {
       "type": "object",
       "description": "Certified performance data. Populated after real usage data accumulates.",

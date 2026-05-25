@@ -215,9 +215,41 @@ async def get_catalog():
     return {"resources": resources, "total": len(resources)}
 
 
+def _build_provider_block(active_agents: list[dict]) -> dict:
+    """Provider block used both inside catalog.provider and inside each
+    offer.provider. Beckn v2 ``Provider`` requires both id and descriptor.
+
+    We key the provider by BPP subscriber id (the cross-network identity)
+    rather than the internal Postgres pkey — that keeps publish/on_select
+    payloads referentially consistent across calls.
+    """
+    provider_org = active_agents[0].get("provider_org") or {}
+    if isinstance(provider_org, str):
+        provider_org = json.loads(provider_org)
+    return {
+        "id": BPP_ID,
+        "descriptor": {
+            "name": provider_org.get("name") or "Provider",
+            "shortDesc": provider_org.get("shortDesc") or "",
+        },
+    }
+
+
 @router.post("/publish")
 async def publish_catalog():
-    """Publish all active agents from DB to the Beckn CDS."""
+    """Publish the BPP's active agents to the CDS at mock-network.
+
+    Builds a Beckn v2 ``catalog/publish`` envelope and POSTs it through
+    ONIX-BPP (which signs and routes to the CDS). The CDS responds
+    synchronously with ACK and asynchronously with ``on_publish`` to our
+    /api/webhook/on_publish endpoint.
+
+    Notes on shape (learned from ONIX schema rejections):
+      * Every ``offer.provider`` must include both ``id`` and ``descriptor``.
+      * ``resourceIds`` must reference the agent's ``beckn_id``, not the
+        internal SERIAL pkey — the BAP only sees beckn_id.
+      * ``publishDirectives`` removed; NFH testnet schema rejects it.
+    """
     agents = await repo.list_agents()
     active_agents = [a for a in agents if a["status"] == "active"]
 
@@ -225,47 +257,48 @@ async def publish_catalog():
         return {"status": "empty", "message": "No active agents to publish"}
 
     resources = [_agent_to_beckn_resource(a) for a in active_agents]
+    provider_block = _build_provider_block(active_agents)
 
-    provider_org = active_agents[0].get("provider_org", {})
-    if isinstance(provider_org, str):
-        provider_org = json.loads(provider_org)
+    offers = []
+    for a in active_agents:
+        agent_name = a["agent_name"]
+        if isinstance(agent_name, str):
+            agent_name = json.loads(agent_name)
+        beckn_id = a["beckn_id"] or str(a["id"])
+        offers.append({
+            "id": f"offer-{beckn_id}",
+            "descriptor": {"name": agent_name.get("en", a.get("label") or "Agent")},
+            "resourceIds": [beckn_id],
+            "provider": provider_block,
+        })
 
     catalog = {
-        "id": "catalog-ai-agents-db",
+        "id": f"catalog-{BPP_ID}",
         "descriptor": {
-            "name": "AI Agent Catalog",
-            "shortDesc": f"Catalog with {len(resources)} AI agents from database",
+            "name": f"{provider_block['descriptor']['name']} — AI Agents",
+            "shortDesc": f"Catalog with {len(resources)} AI agents",
         },
-        "provider": {
-            "id": str(active_agents[0]["provider_id"]),
-            "descriptor": {"name": provider_org.get("name", "Provider")},
-        },
+        "provider": provider_block,
         "resources": resources,
-        "offers": [
-            {
-                "id": f"offer-agent-{a['id']}",
-                "descriptor": {"name": json.loads(a['agent_name'])['en'] if isinstance(a['agent_name'], str) else a['agent_name'].get('en', 'Agent')},
-                "resourceIds": [str(a["id"])],
-                "provider": {"id": str(a["provider_id"])},
-            }
-            for a in active_agents
-        ],
-        "publishDirectives": {"catalogType": "regular"},
+        "offers": offers,
     }
 
     dt = datetime.now(timezone.utc)
     timestamp = dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
+    txn_id = str(uuid.uuid4())
 
     payload = {
         "context": {
             "networkId": NETWORK_ID,
             "action": "catalog/publish",
             "version": "2.0.0",
-            "bapId": "bap.example.com",
-            "bapUri": "http://onix-bap:8081/bap/receiver",
+            # publish has no buyer counterparty; reuse bppId so signature
+            # validation has a non-empty bapId.
+            "bapId": BPP_ID,
+            "bapUri": BPP_URI,
             "bppId": BPP_ID,
             "bppUri": BPP_URI,
-            "transactionId": str(uuid.uuid4()),
+            "transactionId": txn_id,
             "messageId": str(uuid.uuid4()),
             "timestamp": timestamp,
             "ttl": "PT30S",
@@ -277,16 +310,25 @@ async def publish_catalog():
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.post(publish_url, json=payload)
-            result = response.json()
-            logger.info(f"publish sent to CDS — HTTP {response.status_code}, {len(resources)} agents")
-            return {
-                "status": "sent",
-                "fabric": {
-                    "catalogPublished": response.status_code == 200,
-                    "agentsInCatalog": len(resources),
-                },
-                "transactionId": payload["context"]["transactionId"],
-            }
+        ok = response.status_code == 200
+        ack_status = "?"
+        try:
+            ack_status = (response.json().get("message") or {}).get("ack", {}).get("status", "?")
+        except Exception:
+            pass
+        logger.info(
+            "publish sent to CDS — HTTP %d ack=%s [%d agents] [txn=%s]",
+            response.status_code, ack_status, len(resources), txn_id[:8],
+        )
+        return {
+            "status": "sent",
+            "fabric": {
+                "catalogPublished": ok,
+                "ack": ack_status,
+                "agentsInCatalog": len(resources),
+            },
+            "transactionId": txn_id,
+        }
     except Exception as e:
         logger.error(f"publish failed: {e}")
         return {"status": "error", "detail": str(e)}
