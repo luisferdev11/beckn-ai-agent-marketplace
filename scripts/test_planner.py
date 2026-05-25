@@ -5,7 +5,7 @@ Planner test — sends natural language prompts to POST /plan and prints the pla
 Usage:
     python scripts/test_planner.py
 
-Requires orchestrator running (docker compose up orchestrator).
+Requires planner running (docker compose up planner).
 """
 
 import json
@@ -13,7 +13,7 @@ import sys
 import urllib.request
 import urllib.error
 
-ORCHESTRATOR = "http://localhost:3003"
+PLANNER = "http://localhost:3010"
 
 TEST_CASES = [
     {
@@ -60,16 +60,16 @@ def get(url: str) -> dict:
 
 def main():
     print("=" * 60)
-    print("PLANNER TEST — Orchestrator")
+    print("PLANNER TEST — Planner Service")
     print("=" * 60)
 
     # Health check
     print("\n[0] Health check...")
     try:
-        h = get(f"{ORCHESTRATOR}/health")
-        print(f"  orchestrator: {h.get('status', '?')}")
+        h = get(f"{PLANNER}/health")
+        print(f"  planner: {h.get('status', '?')}")
     except Exception as e:
-        print(f"  FAIL: orchestrator not reachable — {e}")
+        print(f"  FAIL: planner not reachable — {e}")
         sys.exit(1)
 
     passed = 0
@@ -80,7 +80,7 @@ def main():
         print(f"  Prompt: {tc['body']['prompt']}")
         print(f"  Input:  {tc['body']['input_format']} -> Output: {tc['body']['output_format']}")
 
-        resp = post(f"{ORCHESTRATOR}/plan", tc["body"])
+        resp = post(f"{PLANNER}/plan", tc["body"])
 
         if "error" in resp:
             print(f"  FAIL: {resp}")

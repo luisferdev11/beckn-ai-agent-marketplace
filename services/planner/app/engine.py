@@ -9,7 +9,7 @@ from pathlib import Path
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 
-from app.planner_models import Plan
+from app.models import Plan
 
 logger = logging.getLogger(__name__)
 
