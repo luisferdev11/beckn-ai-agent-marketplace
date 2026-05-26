@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import SERVICE_NAME, PORT
+from app.routes.publish import router as publish_router
 from app.routes.webhook import router as webhook_router
 
 # Configure logging
@@ -42,6 +43,7 @@ app.add_middleware(
 
 # Register routes
 app.include_router(webhook_router)
+app.include_router(publish_router)
 
 
 @app.get("/health")
@@ -56,60 +58,12 @@ async def get_catalog():
     return get_catalog_for_publish()
 
 
-@app.post("/api/catalog/publish")
-async def publish_catalog():
-    """
-    Publish our AI agent catalog to the Beckn CDS (Catalog Discovery Service).
-
-    Sends catalog/publish to ONIX-BPP, which signs it and forwards to
-    fabric.nfh.global/beckn/catalog. The CDS responds async with on_publish.
-    """
-    import uuid
-    from datetime import datetime, timezone
-    import httpx
-    from app.catalog_data import get_catalog_for_publish
-    from app.config import BPP_CALLBACK_URL, BPP_ID, BPP_URI, NETWORK_ID
-
-    dt = datetime.now(timezone.utc)
-    timestamp = dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
-
-    payload = {
-        "context": {
-            "networkId": NETWORK_ID,
-            "action": "catalog/publish",
-            "version": "2.0.0",
-            "bapId": "bap.example.com",
-            "bapUri": "http://onix-bap:8081/bap/receiver",
-            "bppId": BPP_ID,
-            "bppUri": BPP_URI,
-            "transactionId": str(uuid.uuid4()),
-            "messageId": str(uuid.uuid4()),
-            "timestamp": timestamp,
-            "ttl": "PT30S",
-        },
-        "message": {
-            "catalogs": [get_catalog_for_publish()],
-        },
-    }
-
-    publish_url = f"{BPP_CALLBACK_URL.replace('/bpp/caller', '/bpp/caller')}/publish"
-    # The publish endpoint in ONIX is at /bpp/caller/publish (same base as callbacks)
-    # but the routing config sends it to fabric.nfh.global/beckn/catalog
-
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.post(publish_url, json=payload)
-            result = response.json()
-            logger.info(f"publish sent to CDS — HTTP {response.status_code}")
-            return {
-                "status": "sent",
-                "http_code": response.status_code,
-                "onix_response": result,
-                "transactionId": payload["context"]["transactionId"],
-            }
-    except Exception as e:
-        logger.error(f"publish failed: {e}")
-        return {"status": "error", "detail": str(e)}
+# The legacy ``POST /api/catalog/publish`` inline route has been retired.
+# It built a Beckn envelope from the LEGACY ``get_catalog_for_publish``
+# shape that the CDS no longer accepts (resourceAttributes did not match
+# AgentFacts v1). The replacement is the router at ``app.routes.publish``
+# which mounts ``POST /api/publish`` and runs the legacy → AgentFacts
+# transformer on the way out.
 
 
 @app.get("/api/contracts")

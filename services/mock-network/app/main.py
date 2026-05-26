@@ -1,13 +1,11 @@
 """Mock-network FastAPI entry point.
 
-Wires the logically independent surfaces (DeDi, Registry, Catalog stub)
-into a single ASGI app. Owns the Postgres pool lifecycle so each
-submodule can simply pull the pool when it needs it.
-
-This is Pieza 3 of the discover v2 redesign: the Registry plus the
-foundation for the next pieces (Catalog publish in Pieza 1, Discover
-in Pieza 2). The Catalog routes are currently stubs — Pieza 1 replaces
-them with real publish+index logic.
+Wires every CDS-side surface into a single ASGI app:
+  - DeDi (signature lookups for ONIX)
+  - Registry (BAP/BPP onboarding state + liveness)
+  - Catalog (publish + index)
+  - Discover (semantic + filter retrieval over the index)
+  - CDS operator (stats)
 """
 from __future__ import annotations
 
@@ -19,10 +17,12 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import FastAPI
 
+from app.catalog.routes import operator_router as cds_operator_router
 from app.catalog.routes import router as catalog_router
 from app.config import SERVICE_NAME
 from app.db.pool import close_pool, get_pool
 from app.dedi.routes import router as dedi_router
+from app.discover.routes import router as discover_router
 from app.registry import liveness
 from app.registry.routes import router as registry_router
 
@@ -36,14 +36,8 @@ logger = logging.getLogger(SERVICE_NAME)
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # Establish the pool on startup so the first request does not pay the
-    # connection cost; close it on shutdown so the container can exit
-    # cleanly without leaving idle backends on postgres-mocknet.
     await get_pool()
 
-    # Start the liveness probe scheduler. It hits GET /health on every
-    # active/suspended subscriber every PROBE_INTERVAL_SECONDS so the
-    # discover-time freshness score reflects reality.
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
         liveness.probe_all,
@@ -54,7 +48,7 @@ async def lifespan(_: FastAPI):
     )
     scheduler.start()
     logger.info(
-        "%s started — DeDi mock + Registry + Catalog stub; liveness probe every %ss",
+        "%s started — DeDi + Registry + Catalog + Discover; liveness probe every %ss",
         SERVICE_NAME, liveness.PROBE_INTERVAL_SECONDS,
     )
     try:
@@ -68,9 +62,8 @@ app = FastAPI(
     title="Mock Beckn Network",
     version="2.0.0",
     description=(
-        "Local stand-in for the Beckn network services we cannot run with "
-        "our own identities: DeDi (signature lookups), Registry (BPP/BAP "
-        "onboarding state, Pieza 3), and a CDS stub (Pieza 1 placeholder)."
+        "Local stand-in for the Beckn network services: DeDi, Registry, "
+        "CDS catalog/publish, CDS discover (indexed)."
     ),
     lifespan=lifespan,
 )
@@ -88,3 +81,5 @@ async def health():
 app.include_router(dedi_router)
 app.include_router(registry_router)
 app.include_router(catalog_router)
+app.include_router(discover_router)
+app.include_router(cds_operator_router)
