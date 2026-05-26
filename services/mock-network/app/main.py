@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.catalog.routes import operator_router as cds_operator_router
 from app.catalog.routes import router as catalog_router
@@ -66,6 +67,16 @@ app = FastAPI(
         "CDS catalog/publish, CDS discover (indexed)."
     ),
     lifespan=lifespan,
+)
+
+# CORS — the frontend at :3000 calls /cds/stats from the browser to show
+# index size on the search hero. Wide-open in dev; tighten allow_origins
+# when we have real domains.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 

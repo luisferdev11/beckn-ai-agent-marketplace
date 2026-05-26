@@ -148,11 +148,27 @@ function iconForAgent(name: string): string {
 
 // ── API calls ──────────────────────────────────────────────
 
-export async function discover(query?: string): Promise<DiscoveredAgent[]> {
+/**
+ * Discover agents matching a natural-language prompt.
+ *
+ * Calls BAP /api/contracts/discover with ``intent_text`` (preferred semantic
+ * path — gets embedded server-side and ranked by cosine similarity). After
+ * the sync ACK, polls /api/callbacks/ultimo for the asynchronous on_discover
+ * callback and flattens every catalog (one per BPP) into a single ranked list.
+ *
+ * The CDS returns one on_discover envelope with N catalogs, one per matching
+ * provider. We flatten across providers while preserving per-catalog
+ * ordering (the CDS already ranks within each catalog by semantic similarity).
+ *
+ * @param prompt  Natural-language task description. Empty string returns
+ *                most-recently-published agents (browse mode).
+ */
+export async function discover(prompt?: string): Promise<DiscoveredAgent[]> {
+  const intentText = (prompt ?? '').trim();
   const res = await fetch(`${API}/contracts/discover`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query: query || undefined }),
+    body: JSON.stringify(intentText ? { intent_text: intentText } : {}),
   });
   const { transactionId } = await res.json();
   const cb = await pollCallback(transactionId, 'on_discover');
@@ -160,47 +176,79 @@ export async function discover(query?: string): Promise<DiscoveredAgent[]> {
   const msg = cb.message as { catalogs?: CatalogRaw[] };
   if (!msg.catalogs?.length) return [];
 
-  const catalog = msg.catalogs[0];
-  const resources: ResourceRaw[] = (catalog.resources ?? []) as ResourceRaw[];
-  const offers: OfferRaw[] = (catalog.offers ?? []) as OfferRaw[];
+  // Flatten every catalog (one per BPP) into a single ranked list.
+  // Within a catalog the CDS already ordered by semantic similarity.
+  const all: DiscoveredAgent[] = [];
+  for (const catalog of msg.catalogs) {
+    const providerName =
+      catalog.provider?.descriptor?.name ||
+      catalog.descriptor?.name ||
+      'Unknown Provider';
+    const resources: ResourceRaw[] = (catalog.resources ?? []) as ResourceRaw[];
+    const offers: OfferRaw[] = (catalog.offers ?? []) as OfferRaw[];
 
-  // Build a map: resourceId → offerId
-  const offerMap = new Map<string, string>();
-  for (const o of offers) {
-    for (const rid of o.resourceIds ?? []) {
-      offerMap.set(rid, o.id);
+    // resourceId → offerId, used when the buyer eventually selects.
+    const offerMap = new Map<string, string>();
+    for (const o of offers) {
+      for (const rid of o.resourceIds ?? []) {
+        offerMap.set(rid, o.id);
+      }
+    }
+
+    for (const r of resources) {
+      const ra = r.resourceAttributes ?? {};
+      const pricing = (ra.pricing ?? {}) as Record<string, string | number>;
+      const sla = (ra.sla ?? {}) as Record<string, number>;
+      const caps = (ra.capabilities ?? {}) as Record<string, unknown>;
+      const skills: Skill[] = (ra.skills ?? []) as Skill[];
+
+      all.push({
+        id: r.id,
+        offerId: offerMap.get(r.id) ?? `offer-${r.id}`,
+        name: String(ra.label || r.descriptor?.name || `Agent ${r.id}`),
+        description: String(r.descriptor?.shortDesc || ra.description || ''),
+        longDesc: String(r.descriptor?.longDesc || ra.description || ''),
+        skills,
+        pricing: {
+          model: String(pricing.model || pricing.type || 'per_task'),
+          value: Number(pricing.value ?? 0),
+          currency: String(pricing.currency ?? 'INR'),
+        },
+        sla: {
+          maxLatencyMs: Number(sla.maxLatencyMs ?? 10_000),
+          accuracy: Number(sla.accuracy ?? 0),
+          uptime: Number(sla.uptime ?? 0),
+        },
+        modalities: (caps.modalities ?? ['text']) as string[],
+        jurisdiction: ra.jurisdiction ? String(ra.jurisdiction) : null,
+        // Use the catalog's provider (canonical for the BPP) over any
+        // provider field nested inside agent_facts (often a self-reference).
+        provider: providerName,
+      });
     }
   }
+  return all;
+}
 
-  return resources.map((r): DiscoveredAgent => {
-    const ra = r.resourceAttributes ?? {};
-    const pricing = (ra.pricing ?? {}) as Record<string, string | number>;
-    const sla = (ra.sla ?? {}) as Record<string, number>;
-    const caps = (ra.capabilities ?? {}) as Record<string, unknown>;
-    const skills: Skill[] = (ra.skills ?? []) as Skill[];
+// ── Index introspection ────────────────────────────────────
 
-    return {
-      id: r.id,
-      offerId: offerMap.get(r.id) ?? `offer-${r.id}`,
-      name: String(ra.label || r.descriptor?.name || `Agent ${r.id}`),
-      description: String(r.descriptor?.shortDesc || ra.description || ''),
-      longDesc: String(r.descriptor?.longDesc || ra.description || ''),
-      skills,
-      pricing: {
-        model: String(pricing.model || pricing.type || 'per_task'),
-        value: Number(pricing.value ?? 0),
-        currency: String(pricing.currency ?? 'INR'),
-      },
-      sla: {
-        maxLatencyMs: Number(sla.maxLatencyMs ?? 10_000),
-        accuracy: Number(sla.accuracy ?? 0),
-        uptime: Number(sla.uptime ?? 0),
-      },
-      modalities: (caps.modalities ?? ['text']) as string[],
-      jurisdiction: ra.jurisdiction ? String(ra.jurisdiction) : null,
-      provider: String((ra.provider as Record<string, string>)?.name || 'Unknown Provider'),
-    };
-  });
+/**
+ * Quick stats from the CDS — total currently-published agents.
+ * Used by the search page hero ("N agents available") so the UI does
+ * not have to fire a discover just to know how many agents exist.
+ */
+export async function getCdsStats(): Promise<{ totalAgents: number }> {
+  const CDS = (typeof window !== 'undefined'
+    ? 'http://localhost:8090'
+    : 'http://mock-network:8090');
+  try {
+    const res = await fetch(`${CDS}/cds/stats`);
+    if (!res.ok) return { totalAgents: 0 };
+    const data = await res.json();
+    return { totalAgents: Number(data?.index?.current_agents_total ?? 0) };
+  } catch {
+    return { totalAgents: 0 };
+  }
 }
 
 export async function selectAgent(
@@ -263,6 +311,10 @@ interface CatalogRaw {
   resources?: ResourceRaw[];
   offers?: OfferRaw[];
   descriptor?: { name: string; shortDesc?: string };
+  provider?: {
+    id: string;
+    descriptor?: { name: string; shortDesc?: string };
+  };
 }
 
 interface ResourceRaw {
