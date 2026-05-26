@@ -133,6 +133,47 @@
       }
     },
 
+    "inputSchema": {
+      "type": "object",
+      "description": "JSON Schema defining the structured input this agent expects. Used by the orchestrator to transform data between pipeline steps.",
+      "examples": [{"type": "object", "properties": {"document": {"type": "string"}}, "required": ["document"]}]
+    },
+
+    "outputSchema": {
+      "type": "object",
+      "description": "JSON Schema defining the structured output this agent guarantees. Used by the orchestrator to validate results and feed into next steps.",
+      "examples": [{"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]}]
+    },
+
+    "modelProvider": {
+      "type": "string",
+      "description": "LLM or model backend used by this agent. Optional — informational for the buyer.",
+      "examples": ["anthropic/claude-3.5-sonnet", "meta/llama-3.3-70b", "google/gemini-pro"]
+    },
+
+    "pricing": {
+      "type": "object",
+      "description": "Cost structure for using this agent. Maps to Beckn v2 consideration.",
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "type": "string",
+          "enum": ["per_task", "per_token", "per_minute", "flat"],
+          "description": "Pricing model type"
+        },
+        "currency": {
+          "type": "string",
+          "description": "ISO 4217 currency code",
+          "examples": ["INR", "USD"]
+        },
+        "value": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Price per unit according to the pricing model"
+        }
+      }
+    },
+
     "skills": {
       "type": "array",
       "minItems": 1,
@@ -283,18 +324,18 @@
       }
     },
 
-    "certification": {
-      "type": "object",
-      "description": "Third-party certification. Optional — for production deployments.",
-      "additionalProperties": false,
-      "properties": {
-        "level": {
-          "type": "string",
-          "examples": ["verified", "audited", "certified"]
-        },
-        "issuer":         { "type": "string" },
-        "issuanceDate":   { "type": "string", "format": "date-time" },
-        "expirationDate": { "type": "string", "format": "date-time" }
+    "certifications": {
+      "type": "array",
+      "description": "Third-party certifications and verified credentials. Optional — for production deployments.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "type":           { "type": "string", "description": "Certification type or standard", "examples": ["ISO27001", "SOC2", "audited"] },
+          "issuer":         { "type": "string", "description": "Entity that issued the certification" },
+          "issuanceDate":   { "type": "string", "format": "date-time" },
+          "expirationDate": { "type": "string", "format": "date-time" }
+        }
       }
     }
   }

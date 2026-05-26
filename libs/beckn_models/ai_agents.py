@@ -103,11 +103,13 @@ class AgentFacts(BaseModel):
     endpoints: AgentFactsEndpoints
     capabilities: AgentFactsCapabilities
     skills: list[AgentFactsSkill]
+    inputSchema: Optional[dict] = None
+    outputSchema: Optional[dict] = None
+    modelProvider: Optional[str] = None
     sla: Optional[AgentFactsSLA] = None
     evaluations: Optional[dict] = None
     telemetry: Optional[dict] = None
-    certification: Optional[dict] = None
-    # Not part of AgentFacts spec — kept here because handle_select() reads it
+    certifications: Optional[list[dict]] = None
     pricing: Optional[dict] = None
 
     model_config = {"populate_by_name": True, "extra": "allow"}
