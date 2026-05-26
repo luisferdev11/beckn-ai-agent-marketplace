@@ -1,0 +1,501 @@
+[
+  {
+    "agent_name": "facts-entities-extractor-agent",
+    "label": "Facts & Entities Extractor",
+    "description": "Agente que analiza texto no estructurado y produce una lista de hechos atómicos junto con las entidades nombradas detectadas (personas, organizaciones, lugares, fechas, productos, etc.).",
+    "endpoint": "http://localhost:3011/agents/extractor",
+    "method": "POST",
+
+    "inputSchema": {
+      "type": "object",
+      "examples": [
+        {
+          "type": "object",
+          "properties": {
+            "text": { "type": "string" }
+          },
+          "required": ["text"]
+        }
+      ]
+    },
+
+    "outputSchema": {
+      "type": "object",
+      "examples": [
+        {
+          "type": "object",
+          "properties": {
+            "facts": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "entities": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "type": {
+                    "type": "string",
+                    "enum": ["person", "organization", "location", "date", "product", "other"]
+                  }
+                },
+                "required": ["name", "type"]
+              }
+            }
+          },
+          "required": ["facts", "entities"]
+        }
+      ]
+    },
+
+    "skills": [
+      {
+        "id": "fact-extraction",
+        "description": "Identify atomic, self-contained factual statements within unstructured text",
+        "inputModes": ["text"],
+        "outputModes": ["text"]
+      },
+      {
+        "id": "named-entity-recognition",
+        "description": "Detect and classify entities such as people, organizations, locations, dates and products",
+        "inputModes": ["text"],
+        "outputModes": ["text"]
+      }
+    ],
+    "capabilities": {
+      "modalities": ["text"],
+      "streaming": false
+    }
+  },
+
+  {
+    "agent_name": "text-summarizer-agent",
+    "label": "Text Summarizer",
+    "description": "Agente que condensa texto en un resumen breve y coherente, con un límite de palabras configurable.",
+    "endpoint": "http://localhost:3011/agents/summarizer",
+    "method": "POST",
+
+    "inputSchema": {
+      "type": "object",
+      "examples": [
+        {
+          "type": "object",
+          "properties": {
+            "text": { "type": "string" },
+            "maxWords": { "type": "integer", "default": 50 }
+          },
+          "required": ["text"]
+        }
+      ]
+    },
+
+    "outputSchema": {
+      "type": "object",
+      "examples": [
+        {
+          "type": "object",
+          "properties": {
+            "summary": { "type": "string" },
+            "wordCount": { "type": "integer" }
+          },
+          "required": ["summary", "wordCount"]
+        }
+      ]
+    },
+
+    "skills": [
+      {
+        "id": "content-distillation",
+        "description": "Reduce a passage to its essential ideas without losing core meaning",
+        "inputModes": ["text"],
+        "outputModes": ["text"]
+      },
+      {
+        "id": "length-control",
+        "description": "Enforce an upper bound on the number of words in the generated summary",
+        "inputModes": ["text"],
+        "outputModes": ["text"]
+      }
+    ],
+    "capabilities": {
+      "modalities": ["text"],
+      "streaming": false
+    }
+  },
+
+  {
+    "agent_name": "language-translator-agent",
+    "label": "Language Translator",
+    "description": "Agente que traduce texto al idioma destino indicado y reporta el idioma de origen detectado.",
+    "endpoint": "http://localhost:3011/agents/translator",
+    "method": "POST",
+
+    "inputSchema": {
+      "type": "object",
+      "examples": [
+        {
+          "type": "object",
+          "properties": {
+            "text": { "type": "string" },
+            "targetLang": {
+              "type": "string",
+              "description": "ISO 639-1 language code (e.g. 'en', 'es', 'fr', 'ja')"
+            }
+          },
+          "required": ["text", "targetLang"]
+        }
+      ]
+    },
+
+    "outputSchema": {
+      "type": "object",
+      "examples": [
+        {
+          "type": "object",
+          "properties": {
+            "translation": { "type": "string" },
+            "detectedSourceLang": {
+              "type": "string",
+              "description": "ISO 639-1 code of the detected source language"
+            }
+          },
+          "required": ["translation", "detectedSourceLang"]
+        }
+      ]
+    },
+
+    "skills": [
+      {
+        "id": "translation",
+        "description": "Translate text between natural languages preserving meaning and tone",
+        "inputModes": ["text"],
+        "outputModes": ["text"]
+      },
+      {
+        "id": "source-language-detection",
+        "description": "Identify the original language of the input text automatically",
+        "inputModes": ["text"],
+        "outputModes": ["text"]
+      }
+    ],
+    "capabilities": {
+      "modalities": ["text"],
+      "streaming": false
+    }
+  },
+
+  {
+    "agent_name": "sentiment-analyzer-agent",
+    "label": "Sentiment Analyzer",
+    "description": "Agente que clasifica la polaridad emocional de un texto y produce un score numérico junto con la justificación de la decisión.",
+    "endpoint": "http://localhost:3011/agents/sentiment",
+    "method": "POST",
+
+    "inputSchema": {
+      "type": "object",
+      "examples": [
+        {
+          "type": "object",
+          "properties": {
+            "text": { "type": "string" }
+          },
+          "required": ["text"]
+        }
+      ]
+    },
+
+    "outputSchema": {
+      "type": "object",
+      "examples": [
+        {
+          "type": "object",
+          "properties": {
+            "sentiment": {
+              "type": "string",
+              "enum": ["positive", "negative", "neutral"]
+            },
+            "score": {
+              "type": "number",
+              "minimum": -1,
+              "maximum": 1
+            },
+            "reasoning": { "type": "string" }
+          },
+          "required": ["sentiment", "score"]
+        }
+      ]
+    },
+
+    "skills": [
+      {
+        "id": "sentiment-classification",
+        "description": "Assign a polarity label (positive / negative / neutral) to a text",
+        "inputModes": ["text"],
+        "outputModes": ["text"]
+      },
+      {
+        "id": "polarity-scoring",
+        "description": "Produce a continuous score in [-1, 1] representing emotional intensity",
+        "inputModes": ["text"],
+        "outputModes": ["text"]
+      },
+      {
+        "id": "rationale-generation",
+        "description": "Explain in natural language why the classification was assigned",
+        "inputModes": ["text"],
+        "outputModes": ["text"]
+      }
+    ],
+    "capabilities": {
+      "modalities": ["text"],
+      "streaming": false
+    }
+  },
+
+  {
+    "agent_name": "category-classifier-agent",
+    "label": "Category Classifier",
+    "description": "Agente que asigna un texto a UNA categoría entre un conjunto provisto por el usuario, devolviendo confianza y alternativas rankeadas.",
+    "endpoint": "http://localhost:3011/agents/classifier",
+    "method": "POST",
+
+    "inputSchema": {
+      "type": "object",
+      "examples": [
+        {
+          "type": "object",
+          "properties": {
+            "text": { "type": "string" },
+            "categories": {
+              "type": "array",
+              "items": { "type": "string" },
+              "minItems": 2
+            }
+          },
+          "required": ["text", "categories"]
+        }
+      ]
+    },
+
+    "outputSchema": {
+      "type": "object",
+      "examples": [
+        {
+          "type": "object",
+          "properties": {
+            "category": { "type": "string" },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "alternatives": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "category": { "type": "string" },
+                  "confidence": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "required": ["category", "confidence"]
+              }
+            }
+          },
+          "required": ["category", "confidence"]
+        }
+      ]
+    },
+
+    "skills": [
+      {
+        "id": "multi-class-classification",
+        "description": "Pick the best matching label from a user-provided set of N categories",
+        "inputModes": ["text"],
+        "outputModes": ["text"]
+      },
+      {
+        "id": "confidence-scoring",
+        "description": "Attach a calibrated confidence value to the chosen label",
+        "inputModes": ["text"],
+        "outputModes": ["text"]
+      },
+      {
+        "id": "alternative-ranking",
+        "description": "Return the remaining categories ordered by descending confidence",
+        "inputModes": ["text"],
+        "outputModes": ["text"]
+      }
+    ],
+    "capabilities": {
+      "modalities": ["text"],
+      "streaming": false
+    }
+  },
+
+  {
+    "agent_name": "question-generator-agent",
+    "label": "Question Generator",
+    "description": "Agente que genera preguntas de comprensión a partir de un texto fuente, controlando la cantidad, el tipo y la dificultad de cada una.",
+    "endpoint": "http://localhost:3011/agents/questioner",
+    "method": "POST",
+
+    "inputSchema": {
+      "type": "object",
+      "examples": [
+        {
+          "type": "object",
+          "properties": {
+            "text": { "type": "string" },
+            "count": { "type": "integer", "default": 5 },
+            "difficulty": {
+              "type": "string",
+              "enum": ["easy", "medium", "hard"],
+              "default": "medium"
+            }
+          },
+          "required": ["text"]
+        }
+      ]
+    },
+
+    "outputSchema": {
+      "type": "object",
+      "examples": [
+        {
+          "type": "object",
+          "properties": {
+            "questions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "question": { "type": "string" },
+                  "type": {
+                    "type": "string",
+                    "enum": ["factual", "inferential", "analytical", "open-ended"]
+                  },
+                  "difficulty": {
+                    "type": "string",
+                    "enum": ["easy", "medium", "hard"]
+                  }
+                },
+                "required": ["question", "type", "difficulty"]
+              }
+            }
+          },
+          "required": ["questions"]
+        }
+      ]
+    },
+
+    "skills": [
+      {
+        "id": "question-generation",
+        "description": "Produce comprehension questions grounded in the source text",
+        "inputModes": ["text"],
+        "outputModes": ["text"]
+      },
+      {
+        "id": "question-typing",
+        "description": "Classify each generated question by cognitive type (factual, inferential, analytical, open-ended)",
+        "inputModes": ["text"],
+        "outputModes": ["text"]
+      },
+      {
+        "id": "difficulty-calibration",
+        "description": "Adjust the cognitive load of questions to match the requested difficulty level",
+        "inputModes": ["text"],
+        "outputModes": ["text"]
+      }
+    ],
+    "capabilities": {
+      "modalities": ["text"],
+      "streaming": false
+    }
+  },
+
+  {
+    "agent_name": "content-critic-agent",
+    "label": "Content Critic",
+    "description": "Agente que evalúa un texto contra un conjunto de criterios (por defecto: claridad, coherencia, precisión, utilidad) y produce score, fortalezas, debilidades y sugerencias de mejora.",
+    "endpoint": "http://localhost:3011/agents/critic",
+    "method": "POST",
+
+    "inputSchema": {
+      "type": "object",
+      "examples": [
+        {
+          "type": "object",
+          "properties": {
+            "text": { "type": "string" },
+            "criteria": {
+              "type": "array",
+              "items": { "type": "string" },
+              "default": ["claridad", "coherencia", "precisión", "utilidad"]
+            }
+          },
+          "required": ["text"]
+        }
+      ]
+    },
+
+    "outputSchema": {
+      "type": "object",
+      "examples": [
+        {
+          "type": "object",
+          "properties": {
+            "score": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 10
+            },
+            "strengths": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "weaknesses": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "suggestions": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          },
+          "required": ["score", "strengths", "weaknesses", "suggestions"]
+        }
+      ]
+    },
+
+    "skills": [
+      {
+        "id": "content-evaluation",
+        "description": "Score a text holistically against a set of qualitative criteria",
+        "inputModes": ["text"],
+        "outputModes": ["text"]
+      },
+      {
+        "id": "strength-weakness-analysis",
+        "description": "Surface concrete strong and weak aspects of the text",
+        "inputModes": ["text"],
+        "outputModes": ["text"]
+      },
+      {
+        "id": "constructive-feedback",
+        "description": "Produce actionable suggestions to improve the evaluated text",
+        "inputModes": ["text"],
+        "outputModes": ["text"]
+      }
+    ],
+    "capabilities": {
+      "modalities": ["text"],
+      "streaming": false
+    }
+  }
+]

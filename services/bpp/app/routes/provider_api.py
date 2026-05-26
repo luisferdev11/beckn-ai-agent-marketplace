@@ -78,6 +78,7 @@ class AgentCreate(BaseModel):
     skills: list = []
     input_schema: dict = {}
     output_schema: dict = {}
+    model_provider: Optional[str] = None
     pricing_model: dict = {}
     sla: dict = {}
     jurisdiction: Optional[str] = None
@@ -102,6 +103,7 @@ async def create_agent(req: AgentCreate):
         skills=req.skills,
         input_schema=req.input_schema,
         output_schema=req.output_schema,
+        model_provider=req.model_provider,
         pricing_model=req.pricing_model,
         sla=req.sla,
         jurisdiction=req.jurisdiction,
@@ -112,6 +114,7 @@ async def create_agent(req: AgentCreate):
 
 class AgentUpdate(BaseModel):
     version: Optional[str] = None
+    model_provider: Optional[str] = None
     pricing_model: Optional[dict] = None
     capabilities: Optional[dict] = None
     skills: Optional[list] = None
@@ -170,6 +173,8 @@ def _agent_to_beckn_resource(agent: dict) -> dict:
     label = agent.get("label") or "AI Agent"
     caps = _parse_jsonb(agent["capabilities"], default={})
     skills = _parse_jsonb(agent["skills"], default=[])
+    input_schema = _parse_jsonb(agent["input_schema"], default={})
+    output_schema = _parse_jsonb(agent["output_schema"], default={})
     pricing = _parse_jsonb(agent["pricing_model"], default={})
     sla = _parse_jsonb(agent["sla"], default={})
     endpoints = _parse_jsonb(agent["endpoints"], default={"static": []})
@@ -200,6 +205,9 @@ def _agent_to_beckn_resource(agent: dict) -> dict:
             "endpoints": endpoints,
             "capabilities": caps,
             "skills": skills,
+            "inputSchema": input_schema,
+            "outputSchema": output_schema,
+            "modelProvider": agent.get("model_provider"),
             "sla": sla,
             "pricing": pricing,
         },

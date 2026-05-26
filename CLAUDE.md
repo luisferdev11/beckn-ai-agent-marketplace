@@ -123,7 +123,9 @@ beckn-ai-agent-marketplace/
 ├── services/                     # Microservicios (cada uno con Dockerfile)
 │   ├── bap/                      # MARKETPLACE — lado comprador (BAP) :3001
 │   ├── bpp/                      # PROVIDER — lado proveedor (BPP) :3002
-│   ├── orchestrator/             # ORCHESTRATOR — ejecuta agentes IA :3003
+│   ├── orchestrator/             # ORCHESTRATOR v1 — executor simple :3003
+│   ├── orchestrator2/            # ORCHESTRATOR v2 — multi-agente con LLM :3008
+│   ├── planner/                  # PLANNER — descompone prompts en skills :3010
 │   ├── agents/                   # AGENTS — agentes IA individuales :3004
 │   ├── frontend/                 # FRONTEND — React + Next.js :3000
 │   ├── mock-network/             # Mock local de DeDi + CDS (solo dev) :8090
@@ -148,7 +150,9 @@ beckn-ai-agent-marketplace/
 |--------|---------|-----------------|--------|-----------------|
 | **Beckn/Protocol** | `services/bap/`, `services/bpp/`, `infra/` | `bap-marketplace`, `bpp-provider` | 3001, 3002 | Integracion Beckn v2, catalogo, contratos, API |
 | **Database** | `services/bap/app/db/`, `services/bpp/app/db/`, `infra/db/{bap,bpp}/` | `postgres-bap`, `postgres-bpp` | 5434, 5435 | Persistencia en PostgreSQL (BDs separadas por participante), migraciones |
-| **Orchestrator** | `services/orchestrator/` | `orchestrator` | 3003 | Orquestacion de agentes, colas, timeouts |
+| **Orchestrator v1** | `services/orchestrator/` | `orchestrator` | 3003 | Executor simple de un solo agente (fire & forget) |
+| **Orchestrator v2** | `services/orchestrator2/` | `orchestrator2` | 3008 | Multi-agente con ORCHESTRATOR-LLM: interpreta plan, construye payloads, valida respuestas, ejecuta layers paralelas |
+| **Planner** | `services/planner/` | `planner` | 3010 | Descompone prompts en secuencia de skills via Groq/Llama 3.3 |
 | **Agentes IA** | `services/agents/` | `agents` | 3004 | Agentes reales (summarizer, code reviewer, etc.) |
 | **Frontend** | `services/frontend/` | `frontend` | 3000 | UI React + Next.js, consume API del BAP |
 
@@ -195,15 +199,21 @@ Usamos credenciales pre-registradas del starter kit:
 - Pricing real (base + 18% GST)
 - Smoke test automatizado (`python scripts/smoke_test.py`)
 - Docker compose con 7 servicios (incluye mock-network)
-- Orchestrator conectado al BPP (fire & forget en confirm, polling en status)
+- Orchestrator v1 conectado al BPP (fire & forget en confirm, polling en status)
+- **Planner** como servicio independiente (`services/planner/`, puerto 3010, `POST /plan`): descompone prompts en secuencia de skills via Groq/Llama 3.3 con structured output. Skills registry estatico con 16 skill types. Test: `python scripts/test_planner.py`
+- **Orchestrator v2** (`services/orchestrator2/`, puerto 3008): orquestador multi-agente con ORCHESTRATOR-LLM (Groq). Recibe un plan JSON con steps, agents, executionLayers y finalOutput. Máquina de 5 estados: UNDERSTAND_TASK → DEFINE_PROMPT → EXECUTE_AGENT → VALIDATE_RESPONSE → DELIVER_RESULT. Ejecuta layers en paralelo (`asyncio.gather`), resiliencia con retry + backoff, validación semántica via LLM, fallback determinista si Groq cae. Test: `python scripts/test_orchestrator2.py`. Plan de referencia: `services/orchestrator2/app/executor/plan-example.json`
 - `performanceAttributes` en `on_status` con datos reales: latencia, tokens, resultado del agente
 - `resourceAttributes` de los 3 agentes migrado a schema **AgentFacts** (NANDA compatible, `schemas/agentfacts-v1.json`)
+- **AgentFacts schema extendido** con `inputSchema`, `outputSchema`, `modelProvider`, `pricing` y `certifications` (array). Seed data poblado con JSON Schemas reales para los 3 agentes demo
 - **Persistencia en PostgreSQL con BDs físicamente separadas por participante Beckn:**
   - `postgres-bap` (puerto 5434, volumen `pgdata-bap`) — solo accesible para `bap-marketplace`. Tablas: `contracts` (POV comprador, sin FKs a tablas BPP), `callbacks`.
   - `postgres-bpp` (puerto 5435, volumen `pgdata-bpp`) — solo accesible para `bpp-provider`. Tablas: `categories`, `providers`, `agents`, `contracts` (POV proveedor, con FKs locales), `executions`.
   - Credenciales separadas: `BAP_DB_*` / `BPP_DB_*` en `infra/.env`.
   - Migraciones bajo `infra/db/bap/migrations/` y `infra/db/bpp/migrations/`.
   - Cumple el modelo Beckn v2: cada participante mantiene su propio estado; el correlator entre lados es `transaction_id`, **no** una FK SQL.
+
+### En progreso
+- [ ] Integrar orchestrator2 con el BPP (reemplazar orchestrator v1 en el flujo confirm → status)
 
 ### Pendiente
 - [ ] BAP dinamico (init/confirm deben usar datos del on_select almacenado)
