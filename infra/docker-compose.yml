@@ -37,14 +37,27 @@ services:
   #
   # Servicios base que NO se modifican. Son dependencias externas.
 
-  # MOCK NETWORK — simulates DeDi registry + CDS for local development
-  # Replaces: fabric.nfh.global/registry/dedi and fabric.nfh.global/beckn/catalog
+  # MOCK NETWORK — simulates the Beckn network services we cannot run
+  # locally with our own identities:
+  #   - DeDi registry (subscriber/key lookup consumed by ONIX) — hardcoded data
+  #   - Registry (BPP onboarding + liveness) — Postgres-backed (Pieza 3)
+  #   - CDS publish/discover (Pieza 1+2) — Postgres + pgvector backed
+  # Replaces what would otherwise live at fabric.nfh.global.
   mock-network:
     build:
       context: ..
       dockerfile: services/mock-network/Dockerfile
     ports:
       - "8090:8090"
+    environment:
+      - DB_HOST=postgres-mocknet
+      - DB_PORT=5432
+      - DB_NAME=${MOCKNET_DB_NAME}
+      - DB_USER=${MOCKNET_DB_USER}
+      - DB_PASSWORD=${MOCKNET_DB_PASSWORD}
+    depends_on:
+      postgres-mocknet:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health')"]
       interval: 5s
@@ -102,6 +115,30 @@ services:
       - ./db/bpp/migrations:/docker-entrypoint-initdb.d/migrations
       - ./db/bpp/init.sh:/docker-entrypoint-initdb.d/init.sh
       - pgdata-bpp:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - beckn_network
+
+  # Mock-network database — Registry + CDS state. Independent instance.
+  # Uses pgvector image because Pieza 1 (catalog publish) will store agent
+  # embeddings as `vector(384)` columns; loading the extension here keeps
+  # later migrations idempotent. Only services/mock-network/* connects.
+  postgres-mocknet:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "5436:5432"
+    environment:
+      - POSTGRES_DB=${MOCKNET_DB_NAME}
+      - POSTGRES_USER=${MOCKNET_DB_USER}
+      - POSTGRES_PASSWORD=${MOCKNET_DB_PASSWORD}
+    volumes:
+      - ./db/mocknet/migrations:/docker-entrypoint-initdb.d/migrations
+      - ./db/mocknet/init.sh:/docker-entrypoint-initdb.d/init.sh
+      - pgdata-mocknet:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -463,6 +500,7 @@ services:
 volumes:
   pgdata-bap:
   pgdata-bpp:
+  pgdata-mocknet:
 
 networks:
   beckn_network:

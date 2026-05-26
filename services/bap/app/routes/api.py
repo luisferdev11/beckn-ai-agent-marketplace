@@ -338,8 +338,43 @@ async def status(req: TxnRequest):
     return {"transactionId": req.transaction_id, "onix_response": result}
 
 
+class DiscoverFilters(BaseModel):
+    """Structured filter shape accepted by the CDS (Pieza 2).
+
+    The CDS combines these with the textSearch via SQL WHERE (hard
+    filter) then ranks the surviving candidates by semantic similarity.
+    Empty/omitted fields mean "no constraint".
+    """
+    jurisdiction: Optional[str] = None
+    languages: Optional[List[str]] = None
+    capabilities: Optional[List[str]] = None
+    currency: Optional[str] = None
+    max_price_value: Optional[float] = None
+    max_latency_ms: Optional[int] = None
+
+
 class DiscoverRequest(BaseModel):
+    """Body for ``POST /api/contracts/discover``.
+
+    The cleanest path is ``intent_text``: a curated natural-language
+    prompt that goes straight to ``intent.textSearch`` and gets embedded
+    by the CDS for semantic ranking. This is what the input-sanitiser
+    ("espantapendejos") and the planner team should use.
+
+    The legacy ``query``/``category``/``capabilities`` fields stay for
+    backwards compatibility — they get joined into ``context.schemaContext``
+    (the CDS treats schemaContext as a fallback when textSearch is empty).
+    """
     transaction_id: Optional[str] = None
+
+    # Preferred: curated prompt → intent.textSearch
+    intent_text: Optional[str] = None
+
+    # Optional structured filters → intent.filters
+    filters: Optional[DiscoverFilters] = None
+    limit: Optional[int] = None
+
+    # Legacy keyword inputs — kept for backwards compatibility
     query: Optional[str] = None
     category: Optional[str] = None
     capabilities: Optional[List[str]] = None
@@ -347,29 +382,58 @@ class DiscoverRequest(BaseModel):
 
 @router.post("/contracts/discover")
 async def discover(req: DiscoverRequest):
-    """Discover available AI agents matching optional filters."""
+    """Discover agents in the network.
+
+    Two inputs combine:
+      - ``intent_text``: natural-language prompt for semantic search.
+      - ``filters``: structured hard constraints (jurisdiction, languages, ...).
+
+    Legacy ``query/category/capabilities`` keywords still work and route to
+    ``context.schemaContext`` for backwards-compat; CDS falls back to that
+    only when ``intent_text`` is empty.
+    """
     txn_id = req.transaction_id or str(uuid.uuid4())
     ctx = _build_context("discover", txn_id)
 
-    # Build keywords list from all search inputs
-    keywords = []
+    intent: dict = {}
+    if req.intent_text and req.intent_text.strip():
+        intent["textSearch"] = req.intent_text.strip()
+
+    # NOTE on ``intent.filters`` and ``intent.limit``:
+    # The Beckn v2 OpenAPI spec (validated by ONIX) declares
+    # ``intent`` with ``additionalProperties: false`` and only allows
+    # ``textSearch``, ``filters`` (as JSONPath {type, expression}),
+    # ``spatial``, ``mediaSearch``. Our structured DiscoverFilters and
+    # ``limit`` field do NOT fit that shape — ONIX returns NACK with
+    # "property X is unsupported". To stay schema-compliant on the
+    # BAP→ONIX→CDS path, we carry structured hints in
+    # ``context.schemaContext`` (an array slot the spec leaves to the
+    # network to interpret). The CDS understands this convention via
+    # ``app.discover.models.from_envelope``. Proper JSONPath translation
+    # is roadmap.
+    hints: list[str] = []
+    if req.filters:
+        filters_dict = req.filters.model_dump(exclude_none=True)
+        for key, value in filters_dict.items():
+            if isinstance(value, list):
+                for item in value:
+                    hints.append(f"filter:{key}={item}")
+            else:
+                hints.append(f"filter:{key}={value}")
+    if req.limit is not None:
+        hints.append(f"limit={req.limit}")
+
+    # Legacy keyword fallback — collected into schemaContext so the CDS can
+    # still surface them when intent_text is missing.
+    keywords: list[str] = []
     if req.query:
         keywords.extend(req.query.split())
     if req.category:
         keywords.append(req.category)
     if req.capabilities:
         keywords.extend(req.capabilities)
-
-    # Beckn v2 discover: use standard jsonpath and pass keywords in schemaContext
-    # The BPP handler extracts keywords from context.schemaContext for DB search
-    intent: dict = {
-        "filters": {
-            "type": "jsonpath",
-            "expression": "$.catalogs[*].resources[*]",
-        }
-    }
-    if keywords:
-        ctx["schemaContext"] = keywords
+    if keywords or hints:
+        ctx["schemaContext"] = keywords + hints
 
     payload = {
         "context": ctx,

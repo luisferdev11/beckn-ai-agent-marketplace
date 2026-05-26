@@ -1,0 +1,1333 @@
+[
+  {
+    "bpp": {
+      "subscriber_id": "bpp-docworks.example.com",
+      "role": "BPP",
+      "endpoint_url": "http://onix-docworks:8090/bpp/receiver",
+      "backend_health_url": "http://docworks:9990",
+      "public_key": "Rk9KRHcDV0V0aHo0VVc1WGFNRkpxcUlqVDhOM3VLWE9SQ1JjZkpQR1E0Yz0=",
+      "organization": {
+        "name": "DocWorks AI Labs",
+        "shortDesc": "Document intelligence agents tuned for Indian KYC, invoices and bilingual paperwork."
+      },
+      "jurisdiction": "IND"
+    },
+    "agents": [
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "docworks:executive-summarizer-v1",
+        "agent_name": "urn:agent:docworks:ExecutiveSummarizer",
+        "label": "Executive Brief Summarizer",
+        "description": "Condenses long-form business reports, board decks and research papers into a 5-bullet executive brief preserving the original argument flow. Tuned for Indian regulatory filings such as SEBI and RBI circulars.",
+        "version": "1.4.2",
+        "jurisdiction": "IND",
+        "provider": {"name": "DocWorks AI Labs", "url": "https://docworks.example.com"},
+        "endpoints": {"static": ["http://onix-docworks:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "summarize-long-doc",
+            "description": "Produces a structured executive brief from documents up to 80 pages, calling out risk flags and required actions in a separate section.",
+            "inputModes": ["text/plain", "application/pdf"],
+            "outputModes": ["text/markdown", "application/json"],
+            "supportedLanguages": ["en", "hi"],
+            "latencyBudgetMs": 14000,
+            "maxTokens": 32000
+          }
+        ],
+        "sla": {"maxLatencyMs": 15000, "accuracy": 0.92, "uptime": 0.995},
+        "pricing": {"currency": "INR", "value": 12.5, "model": "per_task"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "docworks:bilingual-ocr-v1",
+        "agent_name": "urn:agent:docworks:BilingualOCR",
+        "label": "Bilingual OCR (English + Devanagari)",
+        "description": "Optical character recognition pipeline trained on Indian utility bills, Aadhaar masking, and Hindi/Marathi government correspondence. Returns layout-aware JSON with page-level bounding boxes.",
+        "version": "2.0.1",
+        "jurisdiction": "IND",
+        "provider": {"name": "DocWorks AI Labs", "url": "https://docworks.example.com"},
+        "endpoints": {"static": ["http://onix-docworks:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text", "image"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt", "oauth2"]}},
+        "skills": [
+          {
+            "id": "ocr-scan",
+            "description": "Extracts printed and handwritten text from scanned documents and photos, preserving table structure when the source has rules or grids.",
+            "inputModes": ["image/jpeg", "image/png", "application/pdf"],
+            "outputModes": ["application/json", "text/plain"],
+            "supportedLanguages": ["en", "hi"],
+            "latencyBudgetMs": 9000
+          }
+        ],
+        "sla": {"maxLatencyMs": 12000, "accuracy": 0.94, "uptime": 0.992},
+        "pricing": {"currency": "INR", "value": 4.75, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "docworks:entity-extractor-v1",
+        "agent_name": "urn:agent:docworks:EntityExtractor",
+        "label": "Document Entity Extractor",
+        "description": "Identifies named entities (people, organisations, dates, monetary amounts, GSTIN, PAN, address blocks) inside contracts and invoices. Outputs normalised JSON ready for downstream ERP ingestion.",
+        "version": "1.2.0",
+        "jurisdiction": "IND",
+        "provider": {"name": "DocWorks AI Labs", "url": "https://docworks.example.com"},
+        "endpoints": {"static": ["http://onix-docworks:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "ner-extract",
+            "description": "Detects and disambiguates entities across the full document; resolves duplicates and links them to a stable internal id.",
+            "inputModes": ["text/plain", "application/pdf"],
+            "outputModes": ["application/json"],
+            "supportedLanguages": ["en", "hi"],
+            "latencyBudgetMs": 6000
+          }
+        ],
+        "sla": {"maxLatencyMs": 8000, "accuracy": 0.9, "uptime": 0.991},
+        "pricing": {"currency": "INR", "value": 3.2, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "docworks:pdf-table-parser-v1",
+        "agent_name": "urn:agent:docworks:PdfTableParser",
+        "label": "PDF Table Parser",
+        "description": "Lifts tabular data out of native and scanned PDFs without relying on column rulers. Handles merged cells, multi-page tables and footnotes; emits CSV plus a JSON schema describing each column.",
+        "version": "1.1.5",
+        "jurisdiction": "IND",
+        "provider": {"name": "DocWorks AI Labs", "url": "https://docworks.example.com"},
+        "endpoints": {"static": ["http://onix-docworks:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text", "image"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "table-extract",
+            "description": "Recovers spreadsheet-like tables from any PDF, inferring headers when missing and reconstructing rows split across pages.",
+            "inputModes": ["application/pdf"],
+            "outputModes": ["text/csv", "application/json"],
+            "supportedLanguages": ["en"],
+            "latencyBudgetMs": 11000
+          }
+        ],
+        "sla": {"maxLatencyMs": 14000, "accuracy": 0.89, "uptime": 0.99},
+        "pricing": {"currency": "INR", "value": 6.0, "model": "per_task"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "docworks:pii-redactor-v1",
+        "agent_name": "urn:agent:docworks:PIIRedactor",
+        "label": "PII Redaction Agent",
+        "description": "Masks personally identifiable information in documents prior to sharing with third parties. Supports Aadhaar, PAN, phone numbers, account numbers and free-text addresses; produces a redaction report keyed by page.",
+        "version": "1.3.1",
+        "jurisdiction": "IND",
+        "provider": {"name": "DocWorks AI Labs", "url": "https://docworks.example.com"},
+        "endpoints": {"static": ["http://onix-docworks:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "redact-pii",
+            "description": "Replaces sensitive tokens with policy-driven placeholders and emits an audit trail mapping each masked span back to its original position.",
+            "inputModes": ["application/pdf", "text/plain"],
+            "outputModes": ["application/pdf", "application/json"],
+            "supportedLanguages": ["en", "hi"],
+            "latencyBudgetMs": 8000
+          }
+        ],
+        "sla": {"maxLatencyMs": 10000, "accuracy": 0.96, "uptime": 0.995},
+        "pricing": {"currency": "INR", "value": 7.8, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "docworks:invoice-classifier-v1",
+        "agent_name": "urn:agent:docworks:InvoiceClassifier",
+        "label": "Invoice Classifier",
+        "description": "Routes inbound invoices into accounting categories (capex, opex, travel, vendor, intercompany) using a fine-tuned model on Indian GST-formatted invoices. Predicts cost centre and HSN/SAC codes per line item.",
+        "version": "1.0.4",
+        "jurisdiction": "IND",
+        "provider": {"name": "DocWorks AI Labs", "url": "https://docworks.example.com"},
+        "endpoints": {"static": ["http://onix-docworks:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "classify-invoice",
+            "description": "Assigns a hierarchical accounting label and a confidence score to every line item; flags inconsistencies between header total and line sum.",
+            "inputModes": ["application/json", "application/pdf"],
+            "outputModes": ["application/json"],
+            "supportedLanguages": ["en"],
+            "latencyBudgetMs": 5000
+          }
+        ],
+        "sla": {"maxLatencyMs": 7000, "accuracy": 0.93, "uptime": 0.993},
+        "pricing": {"currency": "INR", "value": 2.4, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "docworks:legal-clause-finder-v1",
+        "agent_name": "urn:agent:docworks:LegalClauseFinder",
+        "label": "Legal Clause Finder",
+        "description": "Scans long agreements for clauses such as indemnity, limitation of liability, arbitration seat and termination, returning their verbatim spans plus a one-line plain-language explanation each.",
+        "version": "1.0.2",
+        "jurisdiction": "IND",
+        "provider": {"name": "DocWorks AI Labs", "url": "https://docworks.example.com"},
+        "endpoints": {"static": ["http://onix-docworks:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": false, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "clause-locate",
+            "description": "Pinpoints predefined clause types within a contract and returns clause-level metadata including start offset, page and confidence.",
+            "inputModes": ["application/pdf", "text/plain"],
+            "outputModes": ["application/json"],
+            "supportedLanguages": ["en"],
+            "latencyBudgetMs": 12000
+          }
+        ],
+        "sla": {"maxLatencyMs": 16000, "accuracy": 0.88, "uptime": 0.99},
+        "pricing": {"currency": "INR", "value": 18.0, "model": "per_task"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "docworks:handwriting-digitizer-v1",
+        "agent_name": "urn:agent:docworks:HandwritingDigitizer",
+        "label": "Handwriting Digitizer",
+        "description": "Specialised OCR for cursive and printed handwriting on forms, prescriptions and field reports. Trained on 1.2 million labelled samples covering both Latin and Devanagari scripts.",
+        "version": "1.5.0",
+        "jurisdiction": "IND",
+        "provider": {"name": "DocWorks AI Labs", "url": "https://docworks.example.com"},
+        "endpoints": {"static": ["http://onix-docworks:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text", "image"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "handwriting-to-text",
+            "description": "Converts handwritten content into machine-readable text with per-word confidence; flags illegible regions for human review.",
+            "inputModes": ["image/jpeg", "image/png", "application/pdf"],
+            "outputModes": ["application/json", "text/plain"],
+            "supportedLanguages": ["en", "hi"],
+            "latencyBudgetMs": 13000
+          }
+        ],
+        "sla": {"maxLatencyMs": 17000, "accuracy": 0.87, "uptime": 0.988},
+        "pricing": {"currency": "INR", "value": 9.5, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "docworks:doc-deduplicator-v1",
+        "agent_name": "urn:agent:docworks:DocDeduplicator",
+        "label": "Document Deduplicator",
+        "description": "Detects near-duplicate documents in a corpus using locality-sensitive hashing combined with sentence-level embeddings. Useful when ingesting noisy email attachments where the same PDF arrives via multiple threads.",
+        "version": "0.9.7",
+        "jurisdiction": "IND",
+        "provider": {"name": "DocWorks AI Labs", "url": "https://docworks.example.com"},
+        "endpoints": {"static": ["http://onix-docworks:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "near-dup-detect",
+            "description": "Clusters incoming documents by similarity, returning a canonical id per cluster plus a confidence-scored list of variants.",
+            "inputModes": ["text/plain", "application/pdf"],
+            "outputModes": ["application/json"],
+            "supportedLanguages": ["en", "hi"],
+            "latencyBudgetMs": 4000
+          }
+        ],
+        "sla": {"maxLatencyMs": 6000, "accuracy": 0.91, "uptime": 0.989},
+        "pricing": {"currency": "INR", "value": 1.5, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "docworks:kyc-bundler-v1",
+        "agent_name": "urn:agent:docworks:KycBundler",
+        "label": "KYC Bundle Validator",
+        "description": "Verifies a KYC bundle for Indian onboarding flows: confirms Aadhaar masking, checks PAN format and Luhn checksum, validates address proof and produces a single signed evidence pack.",
+        "version": "2.1.0",
+        "jurisdiction": "IND",
+        "provider": {"name": "DocWorks AI Labs", "url": "https://docworks.example.com"},
+        "endpoints": {"static": ["http://onix-docworks:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text", "image"], "streaming": false, "batch": false, "authentication": {"methods": ["jwt", "oauth2"]}},
+        "skills": [
+          {
+            "id": "kyc-bundle-validate",
+            "description": "Runs document-level and cross-document checks against an onboarding policy; emits a tamper-evident PDF report plus a structured verdict.",
+            "inputModes": ["application/pdf", "image/jpeg"],
+            "outputModes": ["application/json", "application/pdf"],
+            "supportedLanguages": ["en", "hi"],
+            "latencyBudgetMs": 18000
+          }
+        ],
+        "sla": {"maxLatencyMs": 22000, "accuracy": 0.97, "uptime": 0.998},
+        "pricing": {"currency": "INR", "value": 22.0, "model": "per_task"}
+      }
+    ]
+  },
+  {
+    "bpp": {
+      "subscriber_id": "bpp-polyglot.example.com",
+      "role": "BPP",
+      "endpoint_url": "http://onix-polyglot:8090/bpp/receiver",
+      "backend_health_url": "http://polyglot:9990",
+      "public_key": "UG9seWdsb3RBSXNlcnZpY2VyZWdpc3RyeWtleVNHUDEyMzQ1Njc4OTBhYmNkPQ==",
+      "organization": {
+        "name": "Polyglot AI Pte Ltd",
+        "shortDesc": "Multilingual NLP services for cross-border South-East Asian and global commerce."
+      },
+      "jurisdiction": "SGP"
+    },
+    "agents": [
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "polyglot:translator-en-hi-v1",
+        "agent_name": "urn:agent:polyglot:TranslatorEnHi",
+        "label": "English to Hindi Translator",
+        "description": "Neural translator specialised for English to Hindi technical and customer-support copy. Preserves transliterated brand names and avoids over-Sanskritising everyday vocabulary.",
+        "version": "3.2.0",
+        "jurisdiction": "SGP",
+        "provider": {"name": "Polyglot AI Pte Ltd", "url": "https://polyglot.example.com"},
+        "endpoints": {"static": ["http://onix-polyglot:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": true, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "translate-en-hi",
+            "description": "Translates between English and Hindi in both directions with auto-detected source; retains markdown, HTML tags and code snippets unchanged.",
+            "inputModes": ["text/plain", "text/html", "text/markdown"],
+            "outputModes": ["text/plain", "text/html", "text/markdown"],
+            "supportedLanguages": ["en", "hi"],
+            "latencyBudgetMs": 1800
+          }
+        ],
+        "sla": {"maxLatencyMs": 2500, "accuracy": 0.93, "uptime": 0.997},
+        "pricing": {"currency": "USD", "value": 0.5, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "polyglot:translator-en-es-v1",
+        "agent_name": "urn:agent:polyglot:TranslatorEnEs",
+        "label": "English to Spanish Translator",
+        "description": "Bidirectional English-Spanish translation engine with separate dialect heads for Latin American and Iberian Spanish. Suitable for marketing copy, support tickets and product catalogs.",
+        "version": "3.1.4",
+        "jurisdiction": "SGP",
+        "provider": {"name": "Polyglot AI Pte Ltd", "url": "https://polyglot.example.com"},
+        "endpoints": {"static": ["http://onix-polyglot:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": true, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "translate-en-es",
+            "description": "Bidirectional translation between English and Spanish with explicit dialect selector (es-419 vs es-ES); preserves placeholders like {name} or %s.",
+            "inputModes": ["text/plain", "text/html"],
+            "outputModes": ["text/plain", "text/html"],
+            "supportedLanguages": ["en", "es"],
+            "latencyBudgetMs": 1500
+          }
+        ],
+        "sla": {"maxLatencyMs": 2200, "accuracy": 0.94, "uptime": 0.996},
+        "pricing": {"currency": "USD", "value": 0.45, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "polyglot:translator-en-ja-v1",
+        "agent_name": "urn:agent:polyglot:TranslatorEnJa",
+        "label": "English to Japanese Translator",
+        "description": "English-Japanese translator with politeness-level control (casual, business, keigo) and a glossary slot for product-specific terminology. Handles vertical text rendering hints in the output metadata.",
+        "version": "2.8.1",
+        "jurisdiction": "SGP",
+        "provider": {"name": "Polyglot AI Pte Ltd", "url": "https://polyglot.example.com"},
+        "endpoints": {"static": ["http://onix-polyglot:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "translate-en-ja",
+            "description": "Translates English<->Japanese with selectable register; accepts a user glossary that overrides default term choices.",
+            "inputModes": ["text/plain"],
+            "outputModes": ["text/plain", "application/json"],
+            "supportedLanguages": ["en", "ja"],
+            "latencyBudgetMs": 2000
+          }
+        ],
+        "sla": {"maxLatencyMs": 2800, "accuracy": 0.92, "uptime": 0.995},
+        "pricing": {"currency": "USD", "value": 0.7, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "polyglot:translator-en-ar-v1",
+        "agent_name": "urn:agent:polyglot:TranslatorEnAr",
+        "label": "English to Arabic Translator",
+        "description": "English<->Arabic translation with right-to-left layout markers in the response, Modern Standard Arabic as default, and optional dialect heads for Gulf and Egyptian variants on request.",
+        "version": "2.6.3",
+        "jurisdiction": "SGP",
+        "provider": {"name": "Polyglot AI Pte Ltd", "url": "https://polyglot.example.com"},
+        "endpoints": {"static": ["http://onix-polyglot:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "translate-en-ar",
+            "description": "Translates English and Arabic in either direction; tags output with directionality hints and offers an optional dialect override.",
+            "inputModes": ["text/plain"],
+            "outputModes": ["text/plain"],
+            "supportedLanguages": ["en", "ar"],
+            "latencyBudgetMs": 2200
+          }
+        ],
+        "sla": {"maxLatencyMs": 3000, "accuracy": 0.9, "uptime": 0.994},
+        "pricing": {"currency": "USD", "value": 0.8, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "polyglot:lang-detect-v1",
+        "agent_name": "urn:agent:polyglot:LanguageDetector",
+        "label": "Language Detector",
+        "description": "Identifies the language and script of arbitrary text snippets, returning ranked candidates with confidence. Robust on short inputs as small as 6 characters thanks to character-level features.",
+        "version": "1.7.0",
+        "jurisdiction": "SGP",
+        "provider": {"name": "Polyglot AI Pte Ltd", "url": "https://polyglot.example.com"},
+        "endpoints": {"static": ["http://onix-polyglot:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "detect-language",
+            "description": "Classifies an input string across 97 supported languages and 28 scripts, returning the top-K candidates with calibrated probabilities.",
+            "inputModes": ["text/plain"],
+            "outputModes": ["application/json"],
+            "supportedLanguages": ["en", "es", "hi", "ja", "ar", "pt", "fr", "de"],
+            "latencyBudgetMs": 400
+          }
+        ],
+        "sla": {"maxLatencyMs": 1000, "accuracy": 0.97, "uptime": 0.999},
+        "pricing": {"currency": "USD", "value": 0.05, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "polyglot:transliterator-v1",
+        "agent_name": "urn:agent:polyglot:Transliterator",
+        "label": "Script Transliterator",
+        "description": "Converts text between writing systems without translating meaning, e.g. Devanagari to Latin or Cyrillic to Latin. Useful for normalising names across registries and search indexes.",
+        "version": "1.3.0",
+        "jurisdiction": "SGP",
+        "provider": {"name": "Polyglot AI Pte Ltd", "url": "https://polyglot.example.com"},
+        "endpoints": {"static": ["http://onix-polyglot:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "transliterate",
+            "description": "Phonetic conversion between scripts using ICU rules where available and ML fallbacks for low-resource pairs.",
+            "inputModes": ["text/plain"],
+            "outputModes": ["text/plain", "application/json"],
+            "supportedLanguages": ["en", "hi", "ar", "ja"],
+            "latencyBudgetMs": 600
+          }
+        ],
+        "sla": {"maxLatencyMs": 1500, "accuracy": 0.95, "uptime": 0.996},
+        "pricing": {"currency": "USD", "value": 0.1, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "polyglot:multi-sentiment-v1",
+        "agent_name": "urn:agent:polyglot:MultilingualSentiment",
+        "label": "Multilingual Sentiment Analyzer",
+        "description": "Returns sentiment polarity and intensity for short texts across nine languages, with an additional 'sarcasm risk' score that flags ironic reviews where polarity alone misleads.",
+        "version": "2.0.0",
+        "jurisdiction": "SGP",
+        "provider": {"name": "Polyglot AI Pte Ltd", "url": "https://polyglot.example.com"},
+        "endpoints": {"static": ["http://onix-polyglot:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "sentiment-analyze",
+            "description": "Tags input with a polarity score from -1 to 1 plus discrete labels (positive, negative, neutral, mixed) and a sarcasm-risk flag.",
+            "inputModes": ["text/plain", "application/json"],
+            "outputModes": ["application/json"],
+            "supportedLanguages": ["en", "es", "hi", "ja", "ar", "pt", "fr", "de"],
+            "latencyBudgetMs": 1200
+          }
+        ],
+        "sla": {"maxLatencyMs": 2000, "accuracy": 0.89, "uptime": 0.995},
+        "pricing": {"currency": "USD", "value": 0.15, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "polyglot:translation-qa-v1",
+        "agent_name": "urn:agent:polyglot:TranslationQualityEstimator",
+        "label": "Translation Quality Estimator",
+        "description": "Reference-free quality estimation for machine translation output. Scores adequacy and fluency on the COMET-QE scale and highlights spans likely to contain critical errors.",
+        "version": "1.4.0",
+        "jurisdiction": "SGP",
+        "provider": {"name": "Polyglot AI Pte Ltd", "url": "https://polyglot.example.com"},
+        "endpoints": {"static": ["http://onix-polyglot:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "translation-qe",
+            "description": "Given a source-target pair, predicts translation quality without a reference and surfaces the lowest-scoring sub-sentences for review.",
+            "inputModes": ["application/json"],
+            "outputModes": ["application/json"],
+            "supportedLanguages": ["en", "es", "hi", "ja", "ar", "pt", "fr", "de"],
+            "latencyBudgetMs": 2500
+          }
+        ],
+        "sla": {"maxLatencyMs": 3500, "accuracy": 0.88, "uptime": 0.993},
+        "pricing": {"currency": "USD", "value": 0.6, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "polyglot:glossary-aligner-v1",
+        "agent_name": "urn:agent:polyglot:GlossaryAligner",
+        "label": "Glossary Aligner",
+        "description": "Builds bilingual term tables from parallel documents. Aligns multi-word phrases, ranks them by translation entropy and exports TBX or CSV for downstream CAT tools.",
+        "version": "0.9.0",
+        "jurisdiction": "SGP",
+        "provider": {"name": "Polyglot AI Pte Ltd", "url": "https://polyglot.example.com"},
+        "endpoints": {"static": ["http://onix-polyglot:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "extract-glossary",
+            "description": "Discovers and aligns terminology across parallel corpora, emitting a ranked glossary with frequency and confidence.",
+            "inputModes": ["application/json"],
+            "outputModes": ["text/csv", "application/xml"],
+            "supportedLanguages": ["en", "es", "hi", "ja", "ar", "pt", "fr", "de"],
+            "latencyBudgetMs": 9000
+          }
+        ],
+        "sla": {"maxLatencyMs": 12000, "accuracy": 0.87, "uptime": 0.99},
+        "pricing": {"currency": "USD", "value": 4.5, "model": "per_task"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "polyglot:speech-transcriber-v1",
+        "agent_name": "urn:agent:polyglot:SpeechTranscriber",
+        "label": "Multilingual Speech Transcriber",
+        "description": "Audio-to-text transcription that detects the spoken language on the fly and outputs time-coded segments. Tuned for call-center recordings with overlapping speakers.",
+        "version": "1.2.2",
+        "jurisdiction": "SGP",
+        "provider": {"name": "Polyglot AI Pte Ltd", "url": "https://polyglot.example.com"},
+        "endpoints": {"static": ["http://onix-polyglot:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["audio", "text"], "streaming": true, "batch": false, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "transcribe-audio",
+            "description": "Streaming speech recognition with speaker diarisation and per-segment language tags; outputs SRT or JSON.",
+            "inputModes": ["audio/wav", "audio/mpeg"],
+            "outputModes": ["application/json", "application/x-subrip"],
+            "supportedLanguages": ["en", "es", "hi", "ja", "ar", "pt"],
+            "latencyBudgetMs": 6000
+          }
+        ],
+        "sla": {"maxLatencyMs": 10000, "accuracy": 0.9, "uptime": 0.994},
+        "pricing": {"currency": "USD", "value": 0.25, "model": "per_minute"}
+      }
+    ]
+  },
+  {
+    "bpp": {
+      "subscriber_id": "bpp-devforge.example.com",
+      "role": "BPP",
+      "endpoint_url": "http://onix-devforge:8090/bpp/receiver",
+      "backend_health_url": "http://devforge:9990",
+      "public_key": "RGV2Rm9yZ2VBSWNvZGVhbmRkZXZ0b29sc3B1YmtleVVTQTAxMjM0NTY3ODlhYg==",
+      "organization": {
+        "name": "DevForge AI Inc",
+        "shortDesc": "AI tooling for software teams: review, security, tests, refactor."
+      },
+      "jurisdiction": "USA"
+    },
+    "agents": [
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "devforge:python-reviewer-v1",
+        "agent_name": "urn:agent:devforge:PythonReviewer",
+        "label": "Python Code Reviewer",
+        "description": "Reviews Python pull requests with a focus on correctness, idiomatic style, type hints and async pitfalls. Returns inline-comment-style suggestions plus a one-paragraph PR summary.",
+        "version": "1.6.0",
+        "jurisdiction": "USA",
+        "provider": {"name": "DevForge AI Inc", "url": "https://devforge.example.com"},
+        "endpoints": {"static": ["http://onix-devforge:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "review-python-diff",
+            "description": "Consumes a unified diff plus optional repo context and emits ranked review comments tied to line numbers.",
+            "inputModes": ["text/x-diff", "application/json"],
+            "outputModes": ["application/json", "text/markdown"],
+            "supportedLanguages": ["en"],
+            "latencyBudgetMs": 8000
+          }
+        ],
+        "sla": {"maxLatencyMs": 12000, "accuracy": 0.9, "uptime": 0.995},
+        "pricing": {"currency": "USD", "value": 1.5, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "devforge:java-reviewer-v1",
+        "agent_name": "urn:agent:devforge:JavaReviewer",
+        "label": "Java Code Reviewer",
+        "description": "Static and semantic review for Java 17+ pull requests. Catches resource leaks, threading issues, equals/hashCode mistakes and Spring anti-patterns; understands Lombok-generated methods.",
+        "version": "1.4.1",
+        "jurisdiction": "USA",
+        "provider": {"name": "DevForge AI Inc", "url": "https://devforge.example.com"},
+        "endpoints": {"static": ["http://onix-devforge:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "review-java-diff",
+            "description": "Inspects Java diffs against the surrounding class hierarchy when provided, returning structured findings with severity.",
+            "inputModes": ["text/x-diff"],
+            "outputModes": ["application/json"],
+            "supportedLanguages": ["en"],
+            "latencyBudgetMs": 8500
+          }
+        ],
+        "sla": {"maxLatencyMs": 12000, "accuracy": 0.89, "uptime": 0.994},
+        "pricing": {"currency": "USD", "value": 1.6, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "devforge:typescript-reviewer-v1",
+        "agent_name": "urn:agent:devforge:TypeScriptReviewer",
+        "label": "TypeScript Code Reviewer",
+        "description": "Reviews TypeScript code with tsconfig awareness. Flags unsafe any, missing exhaustive switches over discriminated unions, and React hook violations such as conditional useEffect calls.",
+        "version": "1.5.2",
+        "jurisdiction": "USA",
+        "provider": {"name": "DevForge AI Inc", "url": "https://devforge.example.com"},
+        "endpoints": {"static": ["http://onix-devforge:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "review-ts-diff",
+            "description": "Reviews TypeScript pull requests; honours strictness flags from the project's tsconfig when provided in the request.",
+            "inputModes": ["text/x-diff"],
+            "outputModes": ["application/json"],
+            "supportedLanguages": ["en"],
+            "latencyBudgetMs": 8000
+          }
+        ],
+        "sla": {"maxLatencyMs": 11000, "accuracy": 0.9, "uptime": 0.994},
+        "pricing": {"currency": "USD", "value": 1.5, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "devforge:go-reviewer-v1",
+        "agent_name": "urn:agent:devforge:GoReviewer",
+        "label": "Go Code Reviewer",
+        "description": "Lints Go pull requests with a focus on goroutine leaks, error-wrapping conventions, channel closure ordering and idiomatic interface use. Output is ready for posting to GitHub PR review API.",
+        "version": "1.3.0",
+        "jurisdiction": "USA",
+        "provider": {"name": "DevForge AI Inc", "url": "https://devforge.example.com"},
+        "endpoints": {"static": ["http://onix-devforge:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "review-go-diff",
+            "description": "Analyses Go diffs and emits comments suitable for direct posting via the GitHub review API, including suggested replacements.",
+            "inputModes": ["text/x-diff"],
+            "outputModes": ["application/json"],
+            "supportedLanguages": ["en"],
+            "latencyBudgetMs": 7500
+          }
+        ],
+        "sla": {"maxLatencyMs": 11000, "accuracy": 0.88, "uptime": 0.993},
+        "pricing": {"currency": "USD", "value": 1.5, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "devforge:owasp-scanner-v1",
+        "agent_name": "urn:agent:devforge:OWASPScanner",
+        "label": "OWASP Top-10 Scanner",
+        "description": "Scans web application source for OWASP Top-10 risks: injection, broken authentication, SSRF, XSS sinks and insecure deserialization. Cross-references findings with affected request handlers and routes.",
+        "version": "2.2.1",
+        "jurisdiction": "USA",
+        "provider": {"name": "DevForge AI Inc", "url": "https://devforge.example.com"},
+        "endpoints": {"static": ["http://onix-devforge:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "scan-owasp",
+            "description": "Performs taint-tracking and pattern detection on a repository snapshot, returning findings ranked by exploitability.",
+            "inputModes": ["application/zip", "application/json"],
+            "outputModes": ["application/json"],
+            "supportedLanguages": ["en"],
+            "latencyBudgetMs": 25000
+          }
+        ],
+        "sla": {"maxLatencyMs": 30000, "accuracy": 0.86, "uptime": 0.99},
+        "pricing": {"currency": "USD", "value": 12.0, "model": "per_task"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "devforge:secrets-finder-v1",
+        "agent_name": "urn:agent:devforge:SecretsFinder",
+        "label": "Secrets Finder",
+        "description": "Scans diffs and full repositories for accidentally committed secrets: API tokens, cloud credentials, private keys and JWT payloads. Validates suspicious findings against issuer entropy and known prefixes.",
+        "version": "1.8.0",
+        "jurisdiction": "USA",
+        "provider": {"name": "DevForge AI Inc", "url": "https://devforge.example.com"},
+        "endpoints": {"static": ["http://onix-devforge:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "find-secrets",
+            "description": "Detects secret material in code and history; verifies live credentials when permitted via an opt-in flag.",
+            "inputModes": ["application/zip", "text/x-diff"],
+            "outputModes": ["application/json"],
+            "supportedLanguages": ["en"],
+            "latencyBudgetMs": 15000
+          }
+        ],
+        "sla": {"maxLatencyMs": 20000, "accuracy": 0.93, "uptime": 0.996},
+        "pricing": {"currency": "USD", "value": 4.0, "model": "per_task"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "devforge:unit-test-gen-v1",
+        "agent_name": "urn:agent:devforge:UnitTestGenerator",
+        "label": "Unit Test Generator",
+        "description": "Generates unit tests for a target function or class with edge cases, including null inputs, boundary values and exception paths. Supports pytest, JUnit5, Jest and Go testing out of the box.",
+        "version": "1.5.0",
+        "jurisdiction": "USA",
+        "provider": {"name": "DevForge AI Inc", "url": "https://devforge.example.com"},
+        "endpoints": {"static": ["http://onix-devforge:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "generate-tests",
+            "description": "Synthesises test cases targeting branch and boundary coverage; emits ready-to-run files for the chosen test framework.",
+            "inputModes": ["text/plain", "application/json"],
+            "outputModes": ["text/plain", "application/json"],
+            "supportedLanguages": ["en"],
+            "latencyBudgetMs": 9000
+          }
+        ],
+        "sla": {"maxLatencyMs": 13000, "accuracy": 0.85, "uptime": 0.993},
+        "pricing": {"currency": "USD", "value": 2.0, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "devforge:dependency-auditor-v1",
+        "agent_name": "urn:agent:devforge:DependencyAuditor",
+        "label": "Dependency Auditor",
+        "description": "Audits manifests (requirements.txt, package.json, pom.xml, go.mod) against CVE databases. Reports actual exposure path of each vulnerability through the import graph, not just version match.",
+        "version": "2.0.3",
+        "jurisdiction": "USA",
+        "provider": {"name": "DevForge AI Inc", "url": "https://devforge.example.com"},
+        "endpoints": {"static": ["http://onix-devforge:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "audit-dependencies",
+            "description": "Resolves the full dependency tree, intersects with vulnerability feeds, and ranks findings by reachable code paths.",
+            "inputModes": ["application/json", "text/plain"],
+            "outputModes": ["application/json"],
+            "supportedLanguages": ["en"],
+            "latencyBudgetMs": 7000
+          }
+        ],
+        "sla": {"maxLatencyMs": 10000, "accuracy": 0.92, "uptime": 0.995},
+        "pricing": {"currency": "USD", "value": 3.0, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "devforge:doc-generator-v1",
+        "agent_name": "urn:agent:devforge:DocGenerator",
+        "label": "API Documentation Generator",
+        "description": "Generates reference documentation from source comments, type signatures and example tests. Outputs MDX or AsciiDoc with cross-links, and detects missing docstrings to flag for the author.",
+        "version": "1.1.2",
+        "jurisdiction": "USA",
+        "provider": {"name": "DevForge AI Inc", "url": "https://devforge.example.com"},
+        "endpoints": {"static": ["http://onix-devforge:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "generate-docs",
+            "description": "Builds API reference docs from source, optionally enriching summaries from example test fixtures.",
+            "inputModes": ["application/zip", "text/plain"],
+            "outputModes": ["text/markdown", "text/plain"],
+            "supportedLanguages": ["en"],
+            "latencyBudgetMs": 14000
+          }
+        ],
+        "sla": {"maxLatencyMs": 18000, "accuracy": 0.88, "uptime": 0.992},
+        "pricing": {"currency": "USD", "value": 2.5, "model": "per_task"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "devforge:refactor-assistant-v1",
+        "agent_name": "urn:agent:devforge:RefactorAssistant",
+        "label": "Refactoring Assistant",
+        "description": "Suggests safe, behaviour-preserving refactors on a target file: extract method, split god-class, replace if-cascade with polymorphism. Each suggestion ships with an estimated risk score and a test-coverage indicator.",
+        "version": "0.8.5",
+        "jurisdiction": "USA",
+        "provider": {"name": "DevForge AI Inc", "url": "https://devforge.example.com"},
+        "endpoints": {"static": ["http://onix-devforge:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": false, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "suggest-refactors",
+            "description": "Returns a ranked list of refactoring proposals with diff previews, risk and impacted test files.",
+            "inputModes": ["text/plain"],
+            "outputModes": ["application/json", "text/x-diff"],
+            "supportedLanguages": ["en"],
+            "latencyBudgetMs": 16000
+          }
+        ],
+        "sla": {"maxLatencyMs": 22000, "accuracy": 0.85, "uptime": 0.99},
+        "pricing": {"currency": "USD", "value": 6.0, "model": "per_task"}
+      }
+    ]
+  },
+  {
+    "bpp": {
+      "subscriber_id": "bpp-comms-mx.example.com",
+      "role": "BPP",
+      "endpoint_url": "http://onix-comms-mx:8090/bpp/receiver",
+      "backend_health_url": "http://comms-mx:9990",
+      "public_key": "Q29tbXNNeFRlbGFNZXhpY29Db3Jwc2NvbW11bmljYXRpb25rZXlNRVgxMjM0NTY=",
+      "organization": {
+        "name": "Tela Comunicaciones",
+        "shortDesc": "Agentes IA para comunicacion empresarial en espanol mexicano y portugues."
+      },
+      "jurisdiction": "MEX"
+    },
+    "agents": [
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "comms-mx:email-drafter-v1",
+        "agent_name": "urn:agent:comms-mx:EmailDrafter",
+        "label": "Business Email Drafter",
+        "description": "Drafts business emails from short bullet briefs, with tone selection (formal, neutral, friendly) and a regional flag that adapts greetings to Mexican Spanish or Brazilian Portuguese conventions.",
+        "version": "1.4.0",
+        "jurisdiction": "MEX",
+        "provider": {"name": "Tela Comunicaciones", "url": "https://tela.example.mx"},
+        "endpoints": {"static": ["http://onix-comms-mx:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": true, "batch": false, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "draft-email",
+            "description": "Produces a complete email (subject + body) from bullet points, respecting tone and region settings.",
+            "inputModes": ["application/json", "text/plain"],
+            "outputModes": ["application/json", "text/plain"],
+            "supportedLanguages": ["es", "pt", "en"],
+            "latencyBudgetMs": 3000
+          }
+        ],
+        "sla": {"maxLatencyMs": 5000, "accuracy": 0.9, "uptime": 0.995},
+        "pricing": {"currency": "MXN", "value": 15.0, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "comms-mx:meeting-summarizer-v1",
+        "agent_name": "urn:agent:comms-mx:MeetingSummarizer",
+        "label": "Meeting Summarizer",
+        "description": "Transforms transcripts into a concise meeting summary plus an action-item table with owners and due dates. Recognises Spanglish utterances and code-switching common in cross-border teams.",
+        "version": "1.2.1",
+        "jurisdiction": "MEX",
+        "provider": {"name": "Tela Comunicaciones", "url": "https://tela.example.mx"},
+        "endpoints": {"static": ["http://onix-comms-mx:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "summarize-meeting",
+            "description": "Generates a structured meeting recap, decisions list and ownership matrix from a raw transcript.",
+            "inputModes": ["text/plain", "application/json"],
+            "outputModes": ["application/json", "text/markdown"],
+            "supportedLanguages": ["es", "pt", "en"],
+            "latencyBudgetMs": 8000
+          }
+        ],
+        "sla": {"maxLatencyMs": 12000, "accuracy": 0.88, "uptime": 0.994},
+        "pricing": {"currency": "MXN", "value": 40.0, "model": "per_task"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "comms-mx:chatbot-script-v1",
+        "agent_name": "urn:agent:comms-mx:ChatbotScriptWriter",
+        "label": "Chatbot Script Writer",
+        "description": "Designs conversational flows for customer support bots with intent branches, fallback paths and tone calibrated to a Mexican retail audience. Exports to Dialogflow or Rasa YAML.",
+        "version": "1.1.0",
+        "jurisdiction": "MEX",
+        "provider": {"name": "Tela Comunicaciones", "url": "https://tela.example.mx"},
+        "endpoints": {"static": ["http://onix-comms-mx:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": false, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "design-chat-flow",
+            "description": "Generates a full bot script with intents, entities, branches and sample utterances per intent.",
+            "inputModes": ["application/json"],
+            "outputModes": ["application/x-yaml", "application/json"],
+            "supportedLanguages": ["es", "pt"],
+            "latencyBudgetMs": 11000
+          }
+        ],
+        "sla": {"maxLatencyMs": 16000, "accuracy": 0.86, "uptime": 0.99},
+        "pricing": {"currency": "MXN", "value": 90.0, "model": "per_task"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "comms-mx:social-post-gen-v1",
+        "agent_name": "urn:agent:comms-mx:SocialPostGenerator",
+        "label": "Social Media Post Generator",
+        "description": "Creates short-form posts tailored per platform (LinkedIn, Twitter/X, Instagram caption) from a single product brief. Adjusts hashtags and length, and provides three variants per request.",
+        "version": "2.0.0",
+        "jurisdiction": "MEX",
+        "provider": {"name": "Tela Comunicaciones", "url": "https://tela.example.mx"},
+        "endpoints": {"static": ["http://onix-comms-mx:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "draft-social-posts",
+            "description": "Outputs three platform-appropriate variants from a single brief, each with a confidence score and suggested time-to-post.",
+            "inputModes": ["application/json", "text/plain"],
+            "outputModes": ["application/json"],
+            "supportedLanguages": ["es", "pt", "en"],
+            "latencyBudgetMs": 4000
+          }
+        ],
+        "sla": {"maxLatencyMs": 6000, "accuracy": 0.87, "uptime": 0.993},
+        "pricing": {"currency": "MXN", "value": 25.0, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "comms-mx:slack-writer-v1",
+        "agent_name": "urn:agent:comms-mx:SlackWriter",
+        "label": "Slack Announcement Writer",
+        "description": "Composes Slack-flavoured announcements with the right block-kit structure: header, context line, divider, action buttons. Tunes voice to either engineering or general-staff audience as requested.",
+        "version": "1.0.6",
+        "jurisdiction": "MEX",
+        "provider": {"name": "Tela Comunicaciones", "url": "https://tela.example.mx"},
+        "endpoints": {"static": ["http://onix-comms-mx:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": false, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "draft-slack-message",
+            "description": "Outputs valid Slack block-kit JSON plus a plain-text fallback variant.",
+            "inputModes": ["application/json", "text/plain"],
+            "outputModes": ["application/json", "text/plain"],
+            "supportedLanguages": ["es", "en"],
+            "latencyBudgetMs": 2500
+          }
+        ],
+        "sla": {"maxLatencyMs": 4000, "accuracy": 0.91, "uptime": 0.995},
+        "pricing": {"currency": "MXN", "value": 10.0, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "comms-mx:teams-writer-v1",
+        "agent_name": "urn:agent:comms-mx:TeamsWriter",
+        "label": "Teams Card Composer",
+        "description": "Builds adaptive cards for Microsoft Teams from a structured prompt, embedding action buttons that map to provided URLs. Tested against the v1.5 adaptive-card schema.",
+        "version": "1.0.2",
+        "jurisdiction": "MEX",
+        "provider": {"name": "Tela Comunicaciones", "url": "https://tela.example.mx"},
+        "endpoints": {"static": ["http://onix-comms-mx:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": false, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "compose-teams-card",
+            "description": "Emits validated adaptive-card JSON plus a fallback plain-text rendering.",
+            "inputModes": ["application/json"],
+            "outputModes": ["application/json"],
+            "supportedLanguages": ["es", "en"],
+            "latencyBudgetMs": 3000
+          }
+        ],
+        "sla": {"maxLatencyMs": 5000, "accuracy": 0.9, "uptime": 0.994},
+        "pricing": {"currency": "MXN", "value": 12.0, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "comms-mx:press-release-v1",
+        "agent_name": "urn:agent:comms-mx:PressReleaseWriter",
+        "label": "Press Release Writer",
+        "description": "Drafts AP-style press releases in Spanish or English from a structured fact-sheet. Adds a boilerplate paragraph and ensures the inverted-pyramid structure (lede, supporting quotes, context).",
+        "version": "1.2.0",
+        "jurisdiction": "MEX",
+        "provider": {"name": "Tela Comunicaciones", "url": "https://tela.example.mx"},
+        "endpoints": {"static": ["http://onix-comms-mx:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": false, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "write-press-release",
+            "description": "Generates a full press release with headline options and an embeddable quote block; ready to copy into Word or send via wire.",
+            "inputModes": ["application/json"],
+            "outputModes": ["text/markdown", "text/plain"],
+            "supportedLanguages": ["es", "en"],
+            "latencyBudgetMs": 7000
+          }
+        ],
+        "sla": {"maxLatencyMs": 10000, "accuracy": 0.88, "uptime": 0.992},
+        "pricing": {"currency": "MXN", "value": 75.0, "model": "per_task"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "comms-mx:tone-coach-v1",
+        "agent_name": "urn:agent:comms-mx:ToneCoach",
+        "label": "Communication Tone Coach",
+        "description": "Rewrites a draft message under a target tone (calm, urgent, empathetic, executive) and highlights phrases that conflict with the desired register. Returns both a rewritten message and a brief coaching note.",
+        "version": "1.0.0",
+        "jurisdiction": "MEX",
+        "provider": {"name": "Tela Comunicaciones", "url": "https://tela.example.mx"},
+        "endpoints": {"static": ["http://onix-comms-mx:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": false, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "tone-rewrite",
+            "description": "Rewrites text under the requested tone while preserving the original meaning; produces a side-by-side diff.",
+            "inputModes": ["application/json", "text/plain"],
+            "outputModes": ["application/json", "text/plain"],
+            "supportedLanguages": ["es", "pt", "en"],
+            "latencyBudgetMs": 3500
+          }
+        ],
+        "sla": {"maxLatencyMs": 6000, "accuracy": 0.89, "uptime": 0.993},
+        "pricing": {"currency": "MXN", "value": 20.0, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "comms-mx:campaign-planner-v1",
+        "agent_name": "urn:agent:comms-mx:CampaignPlanner",
+        "label": "Multi-Channel Campaign Planner",
+        "description": "Plans a 7-day omnichannel campaign (email, social, in-app, push) from a single product launch brief. Assigns content variants per channel and proposes a daily send cadence to maximise reach.",
+        "version": "0.9.4",
+        "jurisdiction": "MEX",
+        "provider": {"name": "Tela Comunicaciones", "url": "https://tela.example.mx"},
+        "endpoints": {"static": ["http://onix-comms-mx:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": false, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "plan-campaign",
+            "description": "Outputs a calendar of channel-specific content drafts plus rationale for cadence and audience targeting.",
+            "inputModes": ["application/json"],
+            "outputModes": ["application/json", "text/markdown"],
+            "supportedLanguages": ["es", "en"],
+            "latencyBudgetMs": 15000
+          }
+        ],
+        "sla": {"maxLatencyMs": 20000, "accuracy": 0.85, "uptime": 0.99},
+        "pricing": {"currency": "MXN", "value": 180.0, "model": "per_task"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "comms-mx:nps-clusterer-v1",
+        "agent_name": "urn:agent:comms-mx:NpsClusterer",
+        "label": "NPS Feedback Clusterer",
+        "description": "Groups free-text NPS or CSAT verbatims into themes and ranks them by frequency and detractor weight. Produces representative quotes per theme to embed in QBR decks.",
+        "version": "1.1.0",
+        "jurisdiction": "MEX",
+        "provider": {"name": "Tela Comunicaciones", "url": "https://tela.example.mx"},
+        "endpoints": {"static": ["http://onix-comms-mx:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "cluster-nps",
+            "description": "Clusters survey verbatims, surfaces themes with frequency and sentiment weight, and selects exemplar quotes per cluster.",
+            "inputModes": ["application/json", "text/csv"],
+            "outputModes": ["application/json"],
+            "supportedLanguages": ["es", "en", "pt"],
+            "latencyBudgetMs": 12000
+          }
+        ],
+        "sla": {"maxLatencyMs": 18000, "accuracy": 0.84, "uptime": 0.991},
+        "pricing": {"currency": "MXN", "value": 60.0, "model": "per_task"}
+      }
+    ]
+  },
+  {
+    "bpp": {
+      "subscriber_id": "bpp-veritas.example.com",
+      "role": "BPP",
+      "endpoint_url": "http://onix-veritas:8090/bpp/receiver",
+      "backend_health_url": "http://veritas:9990",
+      "public_key": "VmVyaXRhc1JlZ3VsYXRlZGRvbWFpbnNlcnZpY2VzcHVia2V5R0JSMDAxMjM0NTY3OD0=",
+      "organization": {
+        "name": "Veritas Domain Intelligence",
+        "shortDesc": "Regulated-domain AI: legal, medical and financial agents for the UK and EEA."
+      },
+      "jurisdiction": "GBR"
+    },
+    "agents": [
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "veritas:clause-analyzer-v1",
+        "agent_name": "urn:agent:veritas:LegalClauseAnalyzer",
+        "label": "Legal Clause Analyzer",
+        "description": "Reads commercial contracts and produces a per-clause analysis: obligations, restrictions, monetary triggers, governing law and severity. Aligned to UK and EU contract law style guides.",
+        "version": "2.4.0",
+        "jurisdiction": "GBR",
+        "provider": {"name": "Veritas Domain Intelligence", "url": "https://veritas.example.co.uk"},
+        "endpoints": {"static": ["http://onix-veritas:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": false, "authentication": {"methods": ["jwt", "oauth2"]}},
+        "skills": [
+          {
+            "id": "analyze-clauses",
+            "description": "Annotates each clause with obligations, parties, monetary triggers and a plain-language summary; cross-references defined terms.",
+            "inputModes": ["application/pdf", "text/plain"],
+            "outputModes": ["application/json"],
+            "supportedLanguages": ["en"],
+            "latencyBudgetMs": 18000
+          }
+        ],
+        "sla": {"maxLatencyMs": 25000, "accuracy": 0.91, "uptime": 0.996},
+        "pricing": {"currency": "GBP", "value": 8.0, "model": "per_task"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "veritas:contract-redliner-v1",
+        "agent_name": "urn:agent:veritas:ContractRedliner",
+        "label": "Contract Redliner",
+        "description": "Compares a counterparty draft against a playbook of acceptable positions and produces tracked-change redlines with rationale notes. Supports markup export to .docx.",
+        "version": "1.8.2",
+        "jurisdiction": "GBR",
+        "provider": {"name": "Veritas Domain Intelligence", "url": "https://veritas.example.co.uk"},
+        "endpoints": {"static": ["http://onix-veritas:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": false, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "redline-contract",
+            "description": "Generates Word-compatible tracked-change redlines and per-edit rationale tied to playbook clauses.",
+            "inputModes": ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+            "outputModes": ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/json"],
+            "supportedLanguages": ["en"],
+            "latencyBudgetMs": 22000
+          }
+        ],
+        "sla": {"maxLatencyMs": 28000, "accuracy": 0.88, "uptime": 0.994},
+        "pricing": {"currency": "GBP", "value": 15.0, "model": "per_task"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "veritas:record-deidentifier-v1",
+        "agent_name": "urn:agent:veritas:MedicalRecordDeidentifier",
+        "label": "Medical Record De-identifier",
+        "description": "Removes the 18 HIPAA-equivalent identifiers from UK NHS-style medical records, preserving clinical content. Produces a re-identification key under separate access control for legitimate clinical follow-up.",
+        "version": "1.5.0",
+        "jurisdiction": "GBR",
+        "provider": {"name": "Veritas Domain Intelligence", "url": "https://veritas.example.co.uk"},
+        "endpoints": {"static": ["http://onix-veritas:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt", "oauth2"], "requiredScopes": ["medical:read", "medical:deidentify"]}},
+        "skills": [
+          {
+            "id": "deidentify-record",
+            "description": "Masks personal identifiers across structured and free-text fields, returning a de-identified record and a separate keyset.",
+            "inputModes": ["application/json", "application/pdf"],
+            "outputModes": ["application/json"],
+            "supportedLanguages": ["en"],
+            "latencyBudgetMs": 14000
+          }
+        ],
+        "sla": {"maxLatencyMs": 18000, "accuracy": 0.96, "uptime": 0.998},
+        "pricing": {"currency": "GBP", "value": 6.5, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "veritas:icd10-coder-v1",
+        "agent_name": "urn:agent:veritas:Icd10Coder",
+        "label": "ICD-10 Coder",
+        "description": "Assigns ICD-10 diagnostic codes to clinical narratives and discharge summaries. Returns multiple plausible codes per claim with rationale snippets quoted from the input.",
+        "version": "1.6.3",
+        "jurisdiction": "GBR",
+        "provider": {"name": "Veritas Domain Intelligence", "url": "https://veritas.example.co.uk"},
+        "endpoints": {"static": ["http://onix-veritas:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "icd10-suggest",
+            "description": "Suggests ICD-10 codes with evidence spans and confidence; flags codes that require manual coder review.",
+            "inputModes": ["text/plain", "application/json"],
+            "outputModes": ["application/json"],
+            "supportedLanguages": ["en"],
+            "latencyBudgetMs": 12000
+          }
+        ],
+        "sla": {"maxLatencyMs": 16000, "accuracy": 0.9, "uptime": 0.995},
+        "pricing": {"currency": "GBP", "value": 5.0, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "veritas:financial-summarizer-v1",
+        "agent_name": "urn:agent:veritas:FinancialReportSummarizer",
+        "label": "Financial Report Summarizer",
+        "description": "Summarises annual and quarterly reports filed under UK GAAP and IFRS. Extracts KPIs, year-over-year deltas and management commentary into a structured fact-pack suitable for analyst briefings.",
+        "version": "2.1.0",
+        "jurisdiction": "GBR",
+        "provider": {"name": "Veritas Domain Intelligence", "url": "https://veritas.example.co.uk"},
+        "endpoints": {"static": ["http://onix-veritas:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": false, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "summarize-financials",
+            "description": "Produces a KPI snapshot, YoY comparison and a 3-paragraph narrative summary citing report page numbers.",
+            "inputModes": ["application/pdf"],
+            "outputModes": ["application/json", "text/markdown"],
+            "supportedLanguages": ["en"],
+            "latencyBudgetMs": 20000
+          }
+        ],
+        "sla": {"maxLatencyMs": 26000, "accuracy": 0.89, "uptime": 0.993},
+        "pricing": {"currency": "GBP", "value": 12.0, "model": "per_task"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "veritas:fraud-detector-v1",
+        "agent_name": "urn:agent:veritas:FraudPatternDetector",
+        "label": "Fraud Pattern Detector",
+        "description": "Inspects transaction streams for structuring, mule activity and unusual merchant cross-references. Output includes a per-transaction risk score, a contributing-feature list and a triage recommendation.",
+        "version": "2.3.1",
+        "jurisdiction": "GBR",
+        "provider": {"name": "Veritas Domain Intelligence", "url": "https://veritas.example.co.uk"},
+        "endpoints": {"static": ["http://onix-veritas:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["structured-data"], "streaming": true, "batch": true, "authentication": {"methods": ["jwt", "oauth2"], "requiredScopes": ["fraud:read"]}},
+        "skills": [
+          {
+            "id": "score-transactions",
+            "description": "Scores incoming transactions in near real time, returning risk band, top contributing features and a triage suggestion.",
+            "inputModes": ["application/json"],
+            "outputModes": ["application/json"],
+            "supportedLanguages": ["en"],
+            "latencyBudgetMs": 1500
+          }
+        ],
+        "sla": {"maxLatencyMs": 2500, "accuracy": 0.92, "uptime": 0.998},
+        "pricing": {"currency": "GBP", "value": 0.4, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "veritas:compliance-checker-v1",
+        "agent_name": "urn:agent:veritas:ComplianceChecker",
+        "label": "Regulatory Compliance Checker",
+        "description": "Validates a document against a configurable rule-pack covering GDPR, MiFID II and FCA conduct rules. Generates a compliance dossier with passing, failing and indeterminate findings, each with citations.",
+        "version": "1.7.4",
+        "jurisdiction": "GBR",
+        "provider": {"name": "Veritas Domain Intelligence", "url": "https://veritas.example.co.uk"},
+        "endpoints": {"static": ["http://onix-veritas:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "check-compliance",
+            "description": "Runs configurable regulatory rule-packs over a document and emits a structured dossier with passes, failures and citations.",
+            "inputModes": ["application/pdf", "text/plain"],
+            "outputModes": ["application/json", "application/pdf"],
+            "supportedLanguages": ["en"],
+            "latencyBudgetMs": 17000
+          }
+        ],
+        "sla": {"maxLatencyMs": 22000, "accuracy": 0.9, "uptime": 0.995},
+        "pricing": {"currency": "GBP", "value": 14.0, "model": "per_task"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "veritas:case-law-finder-v1",
+        "agent_name": "urn:agent:veritas:CaseLawFinder",
+        "label": "Case Law Finder",
+        "description": "Given a legal question or factual matrix, returns the most relevant English and Welsh case law along with neutral citations and one-sentence ratio descriptions. Indexed against bailii and curated UKSC reports.",
+        "version": "1.0.7",
+        "jurisdiction": "GBR",
+        "provider": {"name": "Veritas Domain Intelligence", "url": "https://veritas.example.co.uk"},
+        "endpoints": {"static": ["http://onix-veritas:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": false, "authentication": {"methods": ["jwt"]}},
+        "skills": [
+          {
+            "id": "find-cases",
+            "description": "Ranks candidate cases by relevance and returns neutral citations, jurisdiction, year and a ratio summary.",
+            "inputModes": ["text/plain", "application/json"],
+            "outputModes": ["application/json"],
+            "supportedLanguages": ["en"],
+            "latencyBudgetMs": 9000
+          }
+        ],
+        "sla": {"maxLatencyMs": 12000, "accuracy": 0.87, "uptime": 0.992},
+        "pricing": {"currency": "GBP", "value": 7.0, "model": "per_call"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "veritas:patient-triage-v1",
+        "agent_name": "urn:agent:veritas:PatientTriageAssistant",
+        "label": "Patient Triage Assistant",
+        "description": "Reads patient-reported symptoms and recommends a triage band (self-care, GP within 24h, urgent care, A&E) aligned to NHS 111 logic. Never returns a diagnosis; always cites the rule path used.",
+        "version": "0.7.2",
+        "jurisdiction": "GBR",
+        "provider": {"name": "Veritas Domain Intelligence", "url": "https://veritas.example.co.uk"},
+        "endpoints": {"static": ["http://onix-veritas:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": false, "authentication": {"methods": ["jwt", "oauth2"], "requiredScopes": ["clinical:triage"]}},
+        "skills": [
+          {
+            "id": "triage-symptoms",
+            "description": "Maps symptom narrative to a triage band with the rule path used, always recommending professional follow-up.",
+            "inputModes": ["application/json", "text/plain"],
+            "outputModes": ["application/json"],
+            "supportedLanguages": ["en"],
+            "latencyBudgetMs": 5000
+          }
+        ],
+        "sla": {"maxLatencyMs": 8000, "accuracy": 0.88, "uptime": 0.995},
+        "pricing": {"currency": "GBP", "value": 0.0, "model": "free"}
+      },
+      {
+        "@context": "https://raw.githubusercontent.com/i-interns/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json",
+        "@type": "beckn:AIAgentService",
+        "id": "veritas:aml-screener-v1",
+        "agent_name": "urn:agent:veritas:AmlScreener",
+        "label": "AML Screening Agent",
+        "description": "Screens counterparties against sanctions lists, PEP databases and adverse-media corpora. Produces a single risk verdict with hit details and a recommended escalation step for the MLRO.",
+        "version": "2.0.2",
+        "jurisdiction": "GBR",
+        "provider": {"name": "Veritas Domain Intelligence", "url": "https://veritas.example.co.uk"},
+        "endpoints": {"static": ["http://onix-veritas:8090/bpp/receiver"]},
+        "capabilities": {"modalities": ["text"], "streaming": false, "batch": true, "authentication": {"methods": ["jwt", "oauth2"], "requiredScopes": ["aml:screen"]}},
+        "skills": [
+          {
+            "id": "aml-screen",
+            "description": "Looks up names and entities across multiple regulatory feeds and returns consolidated hits with confidence and recency.",
+            "inputModes": ["application/json"],
+            "outputModes": ["application/json"],
+            "supportedLanguages": ["en"],
+            "latencyBudgetMs": 3000
+          }
+        ],
+        "sla": {"maxLatencyMs": 5000, "accuracy": 0.94, "uptime": 0.997},
+        "pricing": {"currency": "GBP", "value": 2.5, "model": "per_call"}
+      }
+    ]
+  }
+]

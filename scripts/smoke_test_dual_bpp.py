@@ -155,41 +155,49 @@ def main():
             print(f"  {name:20s} UNREACHABLE ({exc})")
             sys.exit(1)
 
-    _section("[2/4] DISCOVER — federated to both BPPs")
-    starting = _get(f"{BAP}/callbacks/count").get("callbacks_recibidos", 0)
+    _section("[2/4] DISCOVER — indexed CDS returns both BPPs' catalogs")
     resp = _post(f"{BAP}/contracts/discover", {})
     txn_id = resp["transactionId"]
     ack = resp.get("onix_response", {}).get("message", {}).get("ack", {}).get("status")
     print(f"  discover transactionId: {txn_id}  ack={ack}")
 
+    # Pieza 2: the CDS replies with ONE on_discover containing one catalog
+    # per BPP (previously the Discovery Service fanned out and the BAP
+    # accumulated one callback per BPP). The invariant we check is now
+    # "at least two distinct providers appear across all returned catalogs".
     deadline = time.time() + 15
     callbacks_for_txn = []
+    seen_providers: list[str] = []
     while time.time() < deadline:
         all_cbs = _get(f"{BAP}/callbacks")
-        callbacks_for_txn = [c for c in all_cbs if c.get("transaction_id") == txn_id and c.get("action") == "on_discover"]
-        if len(callbacks_for_txn) >= 2:
+        callbacks_for_txn = [
+            c for c in all_cbs
+            if c.get("transaction_id") == txn_id and c.get("action") == "on_discover"
+        ]
+        seen_providers = []
+        for cb in callbacks_for_txn:
+            raw_msg = cb.get("message") or "{}"
+            msg = json.loads(raw_msg) if isinstance(raw_msg, str) else raw_msg
+            catalogs = msg.get("catalogs") or [msg.get("catalog", {})]
+            for catalog in catalogs:
+                provider = catalog.get("provider", {}).get("descriptor", {}).get("name", "?")
+                seen_providers.append(provider)
+        if len(set(p for p in seen_providers if p != "?")) >= 2:
             break
         time.sleep(1)
 
-    print(f"  on_discover callbacks for {txn_id}: {len(callbacks_for_txn)}")
-    seen_providers = []
+    print(f"  on_discover callbacks: {len(callbacks_for_txn)} (expect 1 with N catalogs)")
+    distinct_providers = set(p for p in seen_providers if p != "?")
     for cb in callbacks_for_txn:
         raw_msg = cb.get("message") or "{}"
         msg = json.loads(raw_msg) if isinstance(raw_msg, str) else raw_msg
-        # Beckn v2: message.catalogs is an array; some legacy paths use singular catalog.
-        catalogs = msg.get("catalogs") or [msg.get("catalog", {})]
-        for catalog in catalogs:
+        for catalog in msg.get("catalogs", []):
             provider = catalog.get("provider", {}).get("descriptor", {}).get("name", "?")
             agent_count = len(catalog.get("resources", []))
             print(f"    - provider: {provider:30s} agents: {agent_count}")
-            seen_providers.append(provider)
 
-    # The Tecla-side provider name comes from the DB seed and may evolve;
-    # the invariant we care about is "two distinct providers replied, and
-    # one of them is Serg Ops" (the second BPP this PR set introduces).
-    distinct_providers = set(p for p in seen_providers if p != "?")
     discover_ok = (
-        len(callbacks_for_txn) >= 2
+        len(callbacks_for_txn) >= 1
         and len(distinct_providers) >= 2
         and "Serg Ops" in distinct_providers
     )
