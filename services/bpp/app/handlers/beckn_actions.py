@@ -12,10 +12,14 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from app.config import BPP_ID, BPP_URI
+import httpx
+
+from app.config import BPP_ID, BPP_URI, CDS_BASE_URL
 from app.db import repository as repo
 from app.handlers import orchestrator_client
 from app.routes.provider_api import _agent_to_beckn_resource
+
+CDS_INGEST_TIMEOUT_SECONDS = 3.0
 
 logger = logging.getLogger(__name__)
 
@@ -469,11 +473,155 @@ async def handle_cancel(context: dict, message: dict) -> dict:
 
 
 async def handle_rating(context: dict, message: dict) -> dict:
+    # Legacy Beckn v1 echo handler. Real rating ingest lives in
+    # ``handle_rate`` below (Beckn v2 verb). Kept for backwards
+    # compatibility with any old caller still on v1 wire shape.
     ratings = message.get("ratings", [])
-    logger.info(f"rating received: {ratings}")
+    logger.info(f"rating (v1) received: {ratings}")
     return {
         "context": build_response_context(context, "rating"),
         "message": {"ratings": ratings},
+    }
+
+
+# ── rate (Beckn v2) ──────────────────────────────────────────
+
+
+# Beckn v2 RateAction range invariants: any rating outside [min, max]
+# is malformed and must not enter the ledger.
+RATING_MIN_DEFAULT = 1.0
+RATING_MAX_DEFAULT = 5.0
+
+
+def _coerce_rating_input(rinput: dict) -> dict | None:
+    """Normalise one ``RatingInput`` block from the BAP into the shape
+    we persist. Returns ``None`` when the input is missing required
+    fields or the score lies outside its declared range.
+
+    The BAP-side scale (range.min/range.max) is preserved verbatim — a
+    partner could submit on a 1..10 scale tomorrow without breaking the
+    handler. Our discover aggregator normalises to 0..1 separately.
+    """
+    target = (rinput or {}).get("target") or {}
+    target_id = target.get("id")
+    if not target_id:
+        return None
+    rng = (rinput or {}).get("range") or {}
+    if "value" not in rng:
+        return None
+    score = float(rng.get("value"))
+    score_min = float(rng.get("min", RATING_MIN_DEFAULT))
+    score_max = float(rng.get("max", RATING_MAX_DEFAULT))
+    if score_min >= score_max:
+        return None
+    if not (score_min <= score <= score_max):
+        return None
+    feedback = None
+    submission = rinput.get("feedbackFormSubmission") or {}
+    feedback = (submission.get("data") or {}).get("review")
+    # `target.descriptor.code` carries the target type (agent, provider,
+    # contract...). Default to "agent" since the marketplace's primary
+    # ratable surface is the AI agent.
+    target_type = (target.get("descriptor") or {}).get("code") or "agent"
+    return {
+        "target_id": target_id,
+        "target_type": target_type,
+        "score": score,
+        "score_min": score_min,
+        "score_max": score_max,
+        "feedback": feedback,
+    }
+
+
+async def _push_rating_to_cds(*, agent_beckn_id: str, score: float,
+                              score_min: float, score_max: float) -> None:
+    """Best-effort POST to the marketplace CDS ratings ingest.
+
+    Fire-and-forget: a CDS hiccup must NOT roll back the local
+    persistence we just committed. The discover quality component
+    catches up the next time the BPP rates an agent or the operator
+    backfills.
+    """
+    url = f"{CDS_BASE_URL.rstrip('/')}/cds/ratings/ingest"
+    body = {
+        "bppSubscriberId": BPP_ID,
+        "agentBecknId":    agent_beckn_id,
+        "score":           float(score),
+        "scoreMin":        float(score_min),
+        "scoreMax":        float(score_max),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=CDS_INGEST_TIMEOUT_SECONDS) as client:
+            resp = await client.post(url, json=body)
+            logger.info(
+                "cds rating ingest %s → HTTP %s", agent_beckn_id, resp.status_code
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("cds rating ingest failed for %s: %s", agent_beckn_id, exc)
+
+
+async def handle_rate(context: dict, message: dict) -> dict:
+    """Persist incoming RatingInputs and acknowledge with on_rate.
+
+    Same orphan-txn guard as init/confirm/status: a rate for a
+    transaction this BPP has never seen returns a Beckn v2 error
+    envelope (code 30002) without inserting anything.
+
+    The on_rate response echoes the accepted RatingInputs back to the
+    BAP. A future iteration can attach an aggregate snapshot here
+    (the spec allows it); we'll surface ``avg_score`` from the new
+    aggregator once the BPP→CDS ingest is wired.
+    """
+    txn_id = context.get("transactionId", "unknown")
+    stored = await repo.get_contract_by_txn(txn_id)
+    if not stored:
+        logger.warning(f"rate: txn unknown to this BPP, rejecting [txn={txn_id[:8]}]")
+        return _txn_not_found_response(context, "rate")
+
+    bap_id = context.get("bapId")
+    contract_code = stored.get("contract_code")
+
+    accepted: list[dict] = []
+    rejected_count = 0
+    for rinput in message.get("ratingInputs") or []:
+        coerced = _coerce_rating_input(rinput)
+        if coerced is None:
+            rejected_count += 1
+            continue
+        await repo.record_rating_received(
+            transaction_id=txn_id,
+            contract_code=contract_code,
+            target_id=coerced["target_id"],
+            target_type=coerced["target_type"],
+            score=coerced["score"],
+            score_min=coerced["score_min"],
+            score_max=coerced["score_max"],
+            feedback=coerced["feedback"],
+            bap_id=bap_id,
+        )
+        accepted.append(rinput)
+        # Push to CDS aggregator only for agent-targeted ratings — that
+        # is what discover scoring reads. Provider/contract ratings are
+        # logged locally and not (yet) part of the composite score.
+        if coerced["target_type"] == "agent":
+            asyncio.create_task(_push_rating_to_cds(
+                agent_beckn_id=coerced["target_id"],
+                score=coerced["score"],
+                score_min=coerced["score_min"],
+                score_max=coerced["score_max"],
+            ))
+
+    if rejected_count:
+        logger.info(
+            f"rate: {len(accepted)} accepted, {rejected_count} rejected "
+            f"[txn={txn_id[:8]}]"
+        )
+    else:
+        logger.info(f"rate: {len(accepted)} accepted [txn={txn_id[:8]}]")
+
+    return {
+        "context": build_response_context(context, "rate"),
+        "message": {"ratingInputs": accepted},
     }
 
 
@@ -499,6 +647,7 @@ ACTION_HANDLERS = {
     "confirm": handle_confirm,
     "status": handle_status,
     "cancel": handle_cancel,
+    "rate": handle_rate,
     "rating": handle_rating,
     "support": handle_support,
 }

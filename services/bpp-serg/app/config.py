@@ -23,6 +23,7 @@ SERVICE_NAME = os.getenv("SERVICE_NAME", "bpp-serg")
 
 BPP_CALLBACK_URL = os.getenv("BPP_CALLBACK_URL", "http://onix-bpp-serg:8083/bpp/caller")
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:3003")
+CDS_BASE_URL = os.getenv("CDS_BASE_URL", "http://mock-network:8090")
 
 BPP_ID = os.getenv("BPP_ID", "bpp-serg.example.com")
 BPP_URI = os.getenv("BPP_URI", "http://onix-bpp-serg:8083/bpp/receiver")
