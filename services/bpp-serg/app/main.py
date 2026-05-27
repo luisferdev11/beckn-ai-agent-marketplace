@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import SERVICE_NAME, PORT
+from app.errors import register_error_handlers
 from app.routes.publish import router as publish_router
 from app.routes.webhook import router as webhook_router
 
@@ -40,6 +41,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+register_error_handlers(app)
 
 # Register routes
 app.include_router(webhook_router)
