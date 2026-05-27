@@ -47,17 +47,36 @@ def _row_to_resource(row: dict) -> dict:
 
     ``resourceAttributes`` is the AgentFacts JSON we stored verbatim at
     publish time, so this is round-trippable: the BAP sees exactly what
-    the BPP declared.
+    the BPP declared. We append two marketplace-internal keys to
+    ``resourceAttributes`` — prefixed with an underscore so partners can
+    distinguish them from declared AgentFacts fields:
+
+      ``_marketplaceScore``  the composite 0..1 score used for ranking
+      ``_marketplaceScoreComponents``  the three components (semantic,
+                                       freshness, health) so the BAP /
+                                       portal can explain why a result
+                                       ranked where it did.
+
+    Both keys are optional — a row missing ``score`` (e.g. assembled
+    outside the discover pipeline) skips them.
     """
-    return {
+    resource = {
         "id": row["beckn_id"],
         "descriptor": {
             "name": row.get("label") or "AI Agent",
             "shortDesc": (row.get("description") or "")[:200],
             "longDesc": row.get("description") or "",
         },
-        "resourceAttributes": row.get("agent_facts") or {},
+        "resourceAttributes": dict(row.get("agent_facts") or {}),
     }
+    if "score" in row:
+        resource["resourceAttributes"]["_marketplaceScore"] = float(row["score"])
+        resource["resourceAttributes"]["_marketplaceScoreComponents"] = {
+            "semantic": float(row.get("similarity") or 0.0),
+            "freshness": float(row.get("freshness") or 0.0),
+            "health": float(row.get("health_value") or 0.0),
+        }
+    return resource
 
 
 async def assemble_catalogs(
@@ -71,6 +90,11 @@ async def assemble_catalogs(
     been deprecated since publish we still surface their existing
     indexed agents (no join-time filter); a periodic catalog cleanup
     job is a separate concern (Pieza 4).
+
+    Catalog ordering follows the highest composite ``score`` present in
+    each BPP's row group — so a provider whose best agent ranks higher
+    appears earlier in ``message.catalogs``. Within a catalog, resources
+    keep the candidate order (already sorted by composite score upstream).
     """
     # Preserve candidate order within each BPP group so the rank is
     # observable end-to-end. OrderedDict keeps insertion order.
@@ -79,8 +103,14 @@ async def assemble_catalogs(
         bpp_id = row.get("bpp_subscriber_id") or "unknown"
         groups.setdefault(bpp_id, []).append(row)
 
+    def _max_score(rows: list[dict]) -> float:
+        return max((float(r.get("score") or 0.0) for r in rows), default=0.0)
+
+    ordered_bpp_ids = sorted(groups.keys(), key=lambda b: _max_score(groups[b]), reverse=True)
+
     catalogs: list[dict] = []
-    for bpp_id, rows in groups.items():
+    for bpp_id in ordered_bpp_ids:
+        rows = groups[bpp_id]
         subscriber = await registry_repository.get_subscriber(bpp_id)
         if subscriber is None:
             provider_desc = {"name": bpp_id}

@@ -452,11 +452,18 @@ async def cancel(req: TxnRequest):
     bpp_id, bpp_uri = _resolve_bpp_target(req.bpp_id, req.bpp_uri, req.transaction_id)
     ctx = _build_context("cancel", req.transaction_id, bpp_id, bpp_uri)
 
+    # Beckn v2 schema:
+    #   - Commitment.status.code enum: {DRAFT, ACTIVE, CLOSED}
+    #   - Contract.status.code enum:   {DRAFT, ACTIVE, CANCELLED, COMPLETE}
+    # Contract has additionalProperties:false so a free-form `reason`
+    # cannot ride here; if we need to surface a reason on the wire we'd
+    # need to wrap it in a JSON-LD `contractAttributes` object — not
+    # done yet because no consumer needs it.
     commitments = contract.get("commitments", [])
     if not commitments:
-        commitments = [{"id": "commitment-001", "status": {"descriptor": {"code": "CANCELLED"}}}]
+        commitments = [{"id": "commitment-001", "status": {"descriptor": {"code": "CLOSED"}}}]
     else:
-        commitments = [{**c, "status": {"descriptor": {"code": "CANCELLED"}}} for c in commitments]
+        commitments = [{**c, "status": {"descriptor": {"code": "CLOSED"}}} for c in commitments]
 
     payload = {
         "context": ctx,
@@ -464,7 +471,9 @@ async def cancel(req: TxnRequest):
             "contract": {
                 "id": contract.get("id", f"contract-{req.transaction_id[:8]}"),
                 "commitments": commitments,
-                "reason": {"descriptor": {"code": "BUYER_CANCEL", "name": "Cancelled by buyer"}},
+                # Contract.status is a Descriptor directly (no nested "descriptor" key),
+                # asymmetric to Commitment.status which is {descriptor: Descriptor}.
+                "status": {"code": "CANCELLED"},
             }
         },
     }
