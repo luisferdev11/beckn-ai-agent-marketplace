@@ -36,6 +36,10 @@ from app.discover.scoring import (
     FRESHNESS_WEIGHT,
     FRESHNESS_WINDOW_DAYS,
     HEALTH_WEIGHT,
+    QUALITY_DEFAULT,
+    QUALITY_SCALE_MAX,
+    QUALITY_SCALE_MIN,
+    QUALITY_WEIGHT,
     SEMANTIC_WEIGHT,
 )
 from app.embeddings.service import EmbeddingService, get_default_service
@@ -134,9 +138,24 @@ async def retrieve_candidates(
                     WHEN 'degraded'  THEN 0.5::float8
                     WHEN 'unhealthy' THEN 0.0::float8
                     ELSE 0.5::float8
-                END AS health_value
+                END AS health_value,
+                -- Quality: rolling user-rating average normalised to 0..1.
+                -- LEFT JOIN: agents with no ratings yet get NULL → neutral
+                -- default below, matching scoring.quality_score().
+                COALESCE(r.rating_count, 0) AS rating_count,
+                CASE
+                    WHEN r.rating_count IS NULL OR r.rating_count = 0
+                        THEN {QUALITY_DEFAULT}::float8
+                    ELSE GREATEST(0.0::float8, LEAST(1.0::float8,
+                        (r.avg_score - {QUALITY_SCALE_MIN}::float8)
+                        / ({QUALITY_SCALE_MAX}::float8 - {QUALITY_SCALE_MIN}::float8)
+                    ))
+                END AS quality_value
             FROM agent_versions av
             LEFT JOIN subscribers s ON av.bpp_subscriber_id = s.subscriber_id
+            LEFT JOIN agent_ratings_agg r
+                   ON r.bpp_subscriber_id = av.bpp_subscriber_id
+                  AND r.agent_beckn_id    = av.beckn_id
             WHERE av.status = 'current'
               AND ($2::text     IS NULL OR av.jurisdiction       = $2)
               AND ($3::text[]   IS NULL OR av.languages          @> $3)
@@ -150,6 +169,7 @@ async def retrieve_candidates(
             ({SEMANTIC_WEIGHT}::float8 * similarity
              + {FRESHNESS_WEIGHT}::float8 * freshness
              + {HEALTH_WEIGHT}::float8 * health_value
+             + {QUALITY_WEIGHT}::float8 * quality_value
             ) AS score
         FROM ranked
         ORDER BY score DESC, published_at DESC
@@ -177,6 +197,8 @@ async def retrieve_candidates(
         d["similarity"] = float(d.get("similarity") or 0.0)
         d["freshness"] = float(d.get("freshness") or 0.0)
         d["health_value"] = float(d.get("health_value") or 0.5)
+        d["quality_value"] = float(d.get("quality_value") or QUALITY_DEFAULT)
+        d["rating_count"] = int(d.get("rating_count") or 0)
         d["score"] = float(d.get("score") or 0.0)
         d["languages"] = list(d.get("languages") or [])
         d["capability_tags"] = list(d.get("capability_tags") or [])

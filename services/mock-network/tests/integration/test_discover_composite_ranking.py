@@ -24,6 +24,7 @@ import json
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import pytest
 import respx
 
 
@@ -167,6 +168,124 @@ class TestResourcesOrderedByCompositeScore:
         #   3. fresh + unhealthy (max freshness, min health)
         assert ordered_ids[0] == "agent-fresh-and-healthy"
         assert ordered_ids[-1] == "agent-fresh-but-unhealthy"
+
+
+class TestQualityComponentExposedAndRanks:
+    """Quality (rolling user-rating average) is the new 4th composite
+    component. Tests verify it's surfaced and that it actually moves
+    the ranking when other signals are tied."""
+
+    @respx.mock
+    async def test_quality_component_is_in_score_breakdown(
+        self, client, fake_subscribers, fake_discover_index
+    ):
+        now = datetime.now(timezone.utc)
+        fake_discover_index.rows = [{
+            "bpp_subscriber_id": "bpp.example.com",
+            "beckn_id": "agent-rated-001",
+            "label": "Rated", "description": "",
+            "languages": ["en"], "capability_tags": ["x"],
+            "pricing_currency": "INR", "pricing_value": 5.0,
+            "sla_max_latency_ms": 5000, "agent_facts": {"label": "Rated"},
+            "similarity": 0.5, "published_at": now,
+            "bpp_health": "healthy",
+            "avg_rating": 4.0, "rating_count": 7,
+        }]
+        route = respx.post(_BAP_TARGET).respond(
+            200, json={"message": {"ack": {"status": "ACK"}}}
+        )
+        await client.post("/beckn/discover", json=_envelope(text_search="any"))
+        await _wait_for_dispatch(route)
+        body = json.loads(route.calls.last.request.content)
+        res = body["message"]["catalogs"][0]["resources"][0]
+        comp = res["resourceAttributes"]["_marketplaceScoreComponents"]
+        assert "quality" in comp
+        assert "ratingCount" in comp
+        assert comp["ratingCount"] == 7
+        # 4.0 on a 1..5 scale → (4-1)/(5-1) = 0.75
+        assert comp["quality"] == pytest.approx(0.75)
+
+    @respx.mock
+    async def test_well_rated_outranks_unrated_at_same_similarity(
+        self, client, fake_subscribers, fake_discover_index
+    ):
+        now = datetime.now(timezone.utc)
+        fake_discover_index.rows = [
+            {
+                "bpp_subscriber_id": "bpp.example.com",
+                "beckn_id": "agent-well-rated",
+                "label": "Well", "description": "",
+                "languages": ["en"], "capability_tags": ["x"],
+                "pricing_currency": "INR", "pricing_value": 5.0,
+                "sla_max_latency_ms": 5000, "agent_facts": {"label": "Well"},
+                "similarity": 0.4, "published_at": now,
+                "bpp_health": "healthy",
+                "avg_rating": 5.0, "rating_count": 20,
+            },
+            {
+                "bpp_subscriber_id": "bpp.example.com",
+                "beckn_id": "agent-cold-start",
+                "label": "Cold", "description": "",
+                "languages": ["en"], "capability_tags": ["x"],
+                "pricing_currency": "INR", "pricing_value": 5.0,
+                "sla_max_latency_ms": 5000, "agent_facts": {"label": "Cold"},
+                "similarity": 0.4, "published_at": now,
+                "bpp_health": "healthy",
+                # No ratings → falls back to neutral 0.5.
+                "rating_count": 0,
+            },
+        ]
+        route = respx.post(_BAP_TARGET).respond(
+            200, json={"message": {"ack": {"status": "ACK"}}}
+        )
+        await client.post("/beckn/discover", json=_envelope(text_search="any"))
+        await _wait_for_dispatch(route)
+        body = json.loads(route.calls.last.request.content)
+        ordered_ids = [r["id"] for r in body["message"]["catalogs"][0]["resources"]]
+        assert ordered_ids[0] == "agent-well-rated"
+
+    @respx.mock
+    async def test_poorly_rated_drops_below_cold_start(
+        self, client, fake_subscribers, fake_discover_index
+    ):
+        # A well-established but poorly-rated agent (avg 1.5) should
+        # rank below a brand-new agent with no ratings (cold-start
+        # neutral 0.5). Pins the flywheel behaviour: bad reputation
+        # actually demotes you.
+        now = datetime.now(timezone.utc)
+        fake_discover_index.rows = [
+            {
+                "bpp_subscriber_id": "bpp.example.com",
+                "beckn_id": "agent-poorly-rated",
+                "label": "Poor", "description": "",
+                "languages": ["en"], "capability_tags": ["x"],
+                "pricing_currency": "INR", "pricing_value": 5.0,
+                "sla_max_latency_ms": 5000, "agent_facts": {"label": "Poor"},
+                "similarity": 0.5, "published_at": now,
+                "bpp_health": "healthy",
+                "avg_rating": 1.5, "rating_count": 15,
+            },
+            {
+                "bpp_subscriber_id": "bpp.example.com",
+                "beckn_id": "agent-no-ratings",
+                "label": "Cold", "description": "",
+                "languages": ["en"], "capability_tags": ["x"],
+                "pricing_currency": "INR", "pricing_value": 5.0,
+                "sla_max_latency_ms": 5000, "agent_facts": {"label": "Cold"},
+                "similarity": 0.5, "published_at": now,
+                "bpp_health": "healthy",
+                "rating_count": 0,
+            },
+        ]
+        route = respx.post(_BAP_TARGET).respond(
+            200, json={"message": {"ack": {"status": "ACK"}}}
+        )
+        await client.post("/beckn/discover", json=_envelope(text_search="any"))
+        await _wait_for_dispatch(route)
+        body = json.loads(route.calls.last.request.content)
+        ordered_ids = [r["id"] for r in body["message"]["catalogs"][0]["resources"]]
+        assert ordered_ids[0] == "agent-no-ratings"
+        assert ordered_ids[1] == "agent-poorly-rated"
 
 
 class TestCatalogOrderingFollowsBestScorePerBpp:

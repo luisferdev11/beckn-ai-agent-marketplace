@@ -65,8 +65,13 @@ def _run_full_flow(
     agent_input: dict,
     bpp_id: Optional[str] = None,
     bpp_uri: Optional[str] = None,
-) -> str:
-    """Execute select → init → confirm → status against a single agent_id. Returns final status."""
+) -> tuple[str, str, str]:
+    """Execute select → init → confirm → status against a single agent_id.
+
+    Returns (final_status, txn_id, agent_id) so the caller can rate the
+    transaction once it has completed. Pre-rate code only used the status
+    string and is unaffected by the tuple shape.
+    """
     print(f"\n--- {label} ({agent_id}) ---")
 
     starting = _get(f"{BAP}/callbacks/count").get("callbacks_recibidos", 0)
@@ -81,7 +86,7 @@ def _run_full_flow(
 
     if _wait_for_total_callbacks(starting + 1) < starting + 1:
         print("  FAIL: on_select not received")
-        return "TIMEOUT_SELECT"
+        return ("TIMEOUT_SELECT", txn_id, agent_id)
     # Read price from the transaction record (resilient to multiple callbacks landing concurrently).
     # The repository returns the contracts row flat, with consideration as a JSONB column.
     txn_record = _get(f"{BAP}/transactions/{txn_id}")
@@ -95,7 +100,7 @@ def _run_full_flow(
     resp = _post(f"{BAP}/contracts/init", {"transaction_id": txn_id})
     if _wait_for_total_callbacks(starting + 2) < starting + 2:
         print("  FAIL: on_init not received")
-        return "TIMEOUT_INIT"
+        return ("TIMEOUT_INIT", txn_id, agent_id)
     print("  on_init    ✓")
 
     resp = _post(f"{BAP}/contracts/confirm", {
@@ -105,7 +110,7 @@ def _run_full_flow(
     })
     if _wait_for_total_callbacks(starting + 3) < starting + 3:
         print("  FAIL: on_confirm not received")
-        return "TIMEOUT_CONFIRM"
+        return ("TIMEOUT_CONFIRM", txn_id, agent_id)
     print("  on_confirm ✓ (agent dispatched)")
 
     final_code = "?"
@@ -131,13 +136,48 @@ def _run_full_flow(
         if final_code in ("COMPLETED", "FAILED"):
             preview = (status_obj.get("shortDesc") or "").strip().replace("\n", " ")[:160]
             print(f"  preview: {preview}")
-            return final_code
+            return (final_code, txn_id, agent_id)
 
-    return final_code
+    return (final_code, txn_id, agent_id)
+
+
+def _rate_transaction(label: str, *, txn_id: str, agent_id: str, score: float,
+                      feedback: str, bpp_subscriber_id: str) -> bool:
+    """Submit a rating for a completed transaction and verify the CDS
+    aggregator picked it up. Returns True on full success."""
+    print(f"\n--- {label} (agent={agent_id}, score={score}) ---")
+    resp = _post(f"{BAP}/contracts/rate", {
+        "transaction_id": txn_id,
+        "score": score,
+        "feedback": feedback,
+        "target_id": agent_id,
+    })
+    ack = resp.get("onix_response", {}).get("message", {}).get("ack", {}).get("status")
+    print(f"  rate ack={ack}")
+    if ack != "ACK":
+        return False
+
+    # CDS aggregation happens via a fire-and-forget POST from the BPP.
+    # Poll the CDS until we observe the rating reflected in the aggregate
+    # for this (bppSubscriberId, agentBecknId) pair.
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        agg = _get(
+            f"http://localhost:8090/cds/ratings/aggregate"
+            f"?bppSubscriberId={bpp_subscriber_id}&agentBecknId={agent_id}"
+        )
+        if (agg.get("ratingCount") or 0) >= 1:
+            print(
+                f"  cds aggregate: count={agg['ratingCount']} avg={agg.get('avgScore')}"
+            )
+            return True
+        time.sleep(1)
+    print("  FAIL: CDS aggregate never reflected the rating")
+    return False
 
 
 def main():
-    _section("[1/4] HEALTH CHECKS")
+    _section("[1/5] HEALTH CHECKS")
     services = [
         ("bap-marketplace", 3001),
         ("bpp-provider",    3002),
@@ -155,7 +195,7 @@ def main():
             print(f"  {name:20s} UNREACHABLE ({exc})")
             sys.exit(1)
 
-    _section("[2/4] DISCOVER — indexed CDS returns both BPPs' catalogs")
+    _section("[2/5] DISCOVER — indexed CDS returns both BPPs' catalogs")
     resp = _post(f"{BAP}/contracts/discover", {})
     txn_id = resp["transactionId"]
     ack = resp.get("onix_response", {}).get("message", {}).get("ack", {}).get("status")
@@ -202,8 +242,8 @@ def main():
         and "Serg Ops" in distinct_providers
     )
 
-    _section("[3/4] FLOW — Tecla agent (General Tecla Industries)")
-    tecla_status = _run_full_flow(
+    _section("[3/5] FLOW — Tecla agent (General Tecla Industries)")
+    tecla_status, tecla_txn, tecla_agent = _run_full_flow(
         "Tecla / Code Reviewer",
         agent_id="agent-code-reviewer-001",
         offer_id="offer-code-review-basic",
@@ -214,8 +254,8 @@ def main():
         },
     )
 
-    _section("[4/4] FLOW — Serg agent (Serg Ops)")
-    serg_status = _run_full_flow(
+    _section("[4/5] FLOW — Serg agent (Serg Ops)")
+    serg_status, serg_txn, serg_agent = _run_full_flow(
         "Serg / Summarizer",
         agent_id="summarizer-v1",
         offer_id="offer-summarizer-v1",
@@ -232,12 +272,48 @@ def main():
         bpp_uri="http://onix-bpp-serg:8083/bpp/receiver",
     )
 
+    _section("[5/5] RATE — buyer submits ratings, CDS aggregator picks them up")
+    # Both rates exercise the full surface added in this iteration:
+    #   BAP /api/contracts/rate → Beckn /rate envelope through ONIX
+    #   BPP handle_rate persists in ratings_received
+    #   BPP fires CDS /cds/ratings/ingest (fire-and-forget)
+    #   CDS agent_ratings_agg → ratingCount += 1, avg_score updated
+    tecla_rate_ok = serg_rate_ok = False
+    if tecla_status == "COMPLETED":
+        tecla_rate_ok = _rate_transaction(
+            "Tecla rate",
+            txn_id=tecla_txn,
+            agent_id=tecla_agent,
+            score=4.5,
+            feedback="Solid review with concrete examples.",
+            bpp_subscriber_id="bpp.example.com",
+        )
+    else:
+        print(f"  Tecla rate skipped (status was {tecla_status})")
+    if serg_status == "COMPLETED":
+        serg_rate_ok = _rate_transaction(
+            "Serg rate",
+            txn_id=serg_txn,
+            agent_id=serg_agent,
+            score=4.0,
+            feedback="Buen resumen, conciso.",
+            bpp_subscriber_id="bpp-serg.example.com",
+        )
+    else:
+        print(f"  Serg rate skipped (status was {serg_status})")
+
     _section("RESULT")
     print(f"  discover federation : {'PASS' if discover_ok else 'FAIL'}")
     print(f"  Tecla flow          : {tecla_status}")
     print(f"  Serg flow           : {serg_status}")
+    print(f"  Tecla rate          : {'PASS' if tecla_rate_ok else 'FAIL'}")
+    print(f"  Serg rate           : {'PASS' if serg_rate_ok else 'FAIL'}")
 
-    overall_ok = discover_ok and tecla_status == "COMPLETED" and serg_status == "COMPLETED"
+    overall_ok = (
+        discover_ok
+        and tecla_status == "COMPLETED" and serg_status == "COMPLETED"
+        and tecla_rate_ok and serg_rate_ok
+    )
     print()
     if overall_ok:
         print("  ✓ ALL GREEN — dual-BPP marketplace is working end-to-end")

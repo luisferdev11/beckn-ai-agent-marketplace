@@ -309,6 +309,54 @@ def fake_embedder(monkeypatch):
 # ─── Discover (Pieza 2) fakes ───────────────────────────────────────
 
 
+@pytest.fixture(autouse=True)
+def fake_ratings_repo(monkeypatch):
+    """In-memory replacement for ``app.ratings.repository``.
+
+    Keyed by (bpp_subscriber_id, agent_beckn_id); each call adds one
+    sample to the rolling count/sum/avg, matching the SQL semantics
+    in ``ingest_rating``. Yields the underlying dict so tests can
+    introspect / pre-seed.
+    """
+    from datetime import datetime, timezone
+
+    store: dict[tuple[str, str], dict] = {}
+
+    async def _ingest(*, bpp_subscriber_id, agent_beckn_id, score, rated_at=None):
+        key = (bpp_subscriber_id, agent_beckn_id)
+        ts = rated_at or datetime.now(timezone.utc)
+        row = store.get(key)
+        if row is None:
+            row = {
+                "bpp_subscriber_id": bpp_subscriber_id,
+                "agent_beckn_id":    agent_beckn_id,
+                "rating_count":      1,
+                "rating_sum":        float(score),
+                "avg_score":         float(score),
+                "last_rated_at":     ts,
+                "last_updated_at":   ts,
+            }
+        else:
+            row["rating_count"] += 1
+            row["rating_sum"]   += float(score)
+            row["avg_score"]     = row["rating_sum"] / row["rating_count"]
+            row["last_rated_at"] = ts
+            row["last_updated_at"] = ts
+        store[key] = dict(row)
+        return dict(row)
+
+    async def _get(*, bpp_subscriber_id, agent_beckn_id):
+        row = store.get((bpp_subscriber_id, agent_beckn_id))
+        return dict(row) if row else None
+
+    from app.ratings import repository as ratings_repo
+    monkeypatch.setattr(ratings_repo, "ingest_rating", _ingest)
+    monkeypatch.setattr(ratings_repo, "get_aggregate", _get)
+
+    yield store
+    store.clear()
+
+
 @pytest.fixture
 def fake_discover_index(monkeypatch):
     """In-memory candidate store for ``app.discover.query.retrieve_candidates``.
@@ -354,8 +402,13 @@ def fake_discover_index(monkeypatch):
             similarity = float(row.get("similarity") or 0.0)
             freshness = scoring.freshness_score(published_at=row.get("published_at"))
             health = scoring.health_score(row.get("bpp_health"))
+            quality = scoring.quality_score(
+                avg_rating=row.get("avg_rating"),
+                rating_count=int(row.get("rating_count") or 0),
+            )
             score = scoring.composite_score(
-                semantic=similarity, freshness=freshness, health=health
+                semantic=similarity, freshness=freshness,
+                health=health, quality=quality,
             )
             filtered.append({
                 **row,
@@ -363,6 +416,8 @@ def fake_discover_index(monkeypatch):
                 "bpp_health": row.get("bpp_health") or "unknown",
                 "freshness": freshness,
                 "health_value": health,
+                "quality_value": quality,
+                "rating_count": int(row.get("rating_count") or 0),
                 "score": score,
             })
         filtered.sort(

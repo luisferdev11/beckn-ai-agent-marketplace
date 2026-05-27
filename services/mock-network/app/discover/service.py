@@ -75,6 +75,8 @@ def _row_to_resource(row: dict) -> dict:
             "semantic": float(row.get("similarity") or 0.0),
             "freshness": float(row.get("freshness") or 0.0),
             "health": float(row.get("health_value") or 0.0),
+            "quality": float(row.get("quality_value") or 0.0),
+            "ratingCount": int(row.get("rating_count") or 0),
         }
     return resource
 

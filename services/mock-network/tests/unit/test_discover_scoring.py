@@ -37,9 +37,12 @@ from app.discover.scoring import (
     SEMANTIC_WEIGHT,
     FRESHNESS_WEIGHT,
     HEALTH_WEIGHT,
+    QUALITY_WEIGHT,
+    QUALITY_DEFAULT,
     composite_score,
     freshness_score,
     health_score,
+    quality_score,
 )
 
 
@@ -48,14 +51,25 @@ from app.discover.scoring import (
 
 class TestWeightsAreThePublishedContract:
     def test_weights_sum_to_one(self):
-        assert SEMANTIC_WEIGHT + FRESHNESS_WEIGHT + HEALTH_WEIGHT == pytest.approx(1.0)
+        total = (
+            SEMANTIC_WEIGHT + FRESHNESS_WEIGHT + HEALTH_WEIGHT + QUALITY_WEIGHT
+        )
+        assert total == pytest.approx(1.0)
 
     def test_semantic_is_dominant_weight(self):
         assert SEMANTIC_WEIGHT > FRESHNESS_WEIGHT
         assert SEMANTIC_WEIGHT > HEALTH_WEIGHT
+        assert SEMANTIC_WEIGHT > QUALITY_WEIGHT
 
     def test_freshness_and_health_have_equal_weight(self):
         assert FRESHNESS_WEIGHT == HEALTH_WEIGHT
+
+    def test_quality_outweighs_either_freshness_or_health(self):
+        # The briefing leans heavily on user ratings in the trust score.
+        # Reflected here: quality should carry more weight than either
+        # of the operational signals (freshness, health) on its own.
+        assert QUALITY_WEIGHT > FRESHNESS_WEIGHT
+        assert QUALITY_WEIGHT > HEALTH_WEIGHT
 
 
 # ── Freshness ──────────────────────────────────────────────────────
@@ -126,35 +140,90 @@ class TestHealthScore:
 # ── Composite ──────────────────────────────────────────────────────
 
 
+class TestQualityScore:
+    """Quality maps a 1..5 user rating average to 0..1, with a neutral
+    cold-start default. Tests pin the boundary behaviour."""
+
+    def test_no_ratings_yields_default(self):
+        assert quality_score(avg_rating=None, rating_count=0) == QUALITY_DEFAULT
+
+    def test_zero_count_yields_default_even_with_avg(self):
+        # If a backend ever passes (avg=4.5, count=0) — a bug elsewhere —
+        # the scorer still returns the neutral default.
+        assert quality_score(avg_rating=4.5, rating_count=0) == QUALITY_DEFAULT
+
+    def test_five_star_average_yields_one(self):
+        assert quality_score(avg_rating=5.0, rating_count=10) == pytest.approx(1.0)
+
+    def test_one_star_average_yields_zero(self):
+        assert quality_score(avg_rating=1.0, rating_count=10) == pytest.approx(0.0)
+
+    def test_three_star_average_yields_half(self):
+        assert quality_score(avg_rating=3.0, rating_count=4) == pytest.approx(0.5)
+
+    def test_custom_scale_is_honoured(self):
+        # A partner publishing on a 0..10 scale should also normalise.
+        assert quality_score(
+            avg_rating=5.0, rating_count=3, scale_min=0.0, scale_max=10.0,
+        ) == pytest.approx(0.5)
+
+    def test_avg_above_scale_clamps_to_one(self):
+        # Defensive against a buggy aggregator producing avg > max.
+        assert quality_score(avg_rating=6.0, rating_count=1) == 1.0
+
+    def test_avg_below_scale_clamps_to_zero(self):
+        assert quality_score(avg_rating=0.5, rating_count=1) == 0.0
+
+
 class TestCompositeScore:
     def test_zero_inputs_give_zero(self):
-        assert composite_score(semantic=0.0, freshness=0.0, health=0.0) == 0.0
+        assert composite_score(
+            semantic=0.0, freshness=0.0, health=0.0, quality=0.0,
+        ) == 0.0
 
     def test_perfect_inputs_give_one(self):
-        score = composite_score(semantic=1.0, freshness=1.0, health=1.0)
+        score = composite_score(
+            semantic=1.0, freshness=1.0, health=1.0, quality=1.0,
+        )
         assert score == pytest.approx(1.0)
 
     def test_semantic_only_at_max_yields_semantic_weight(self):
-        # With freshness=health=0, the composite equals SEMANTIC_WEIGHT.
-        assert composite_score(semantic=1.0, freshness=0.0, health=0.0) == pytest.approx(
-            SEMANTIC_WEIGHT
-        )
+        # With freshness=health=quality=0, the composite equals SEMANTIC_WEIGHT.
+        assert composite_score(
+            semantic=1.0, freshness=0.0, health=0.0, quality=0.0,
+        ) == pytest.approx(SEMANTIC_WEIGHT)
 
     def test_health_only_at_max_yields_health_weight(self):
-        assert composite_score(semantic=0.0, freshness=0.0, health=1.0) == pytest.approx(
-            HEALTH_WEIGHT
+        assert composite_score(
+            semantic=0.0, freshness=0.0, health=1.0, quality=0.0,
+        ) == pytest.approx(HEALTH_WEIGHT)
+
+    def test_quality_only_at_max_yields_quality_weight(self):
+        assert composite_score(
+            semantic=0.0, freshness=0.0, health=0.0, quality=1.0,
+        ) == pytest.approx(QUALITY_WEIGHT)
+
+    def test_default_quality_is_neutral(self):
+        # When the caller hasn't wired the new aggregator, composite
+        # should still produce a valid result with neutral quality.
+        with_default = composite_score(semantic=0.5, freshness=0.5, health=0.5)
+        with_explicit = composite_score(
+            semantic=0.5, freshness=0.5, health=0.5, quality=QUALITY_DEFAULT,
         )
+        assert with_default == with_explicit
 
     def test_clamps_negative_semantic(self):
         # pgvector can return a small negative when vectors point opposite.
         # The composite should treat negative similarity as 0.0.
-        assert composite_score(semantic=-0.1, freshness=1.0, health=1.0) == pytest.approx(
-            FRESHNESS_WEIGHT + HEALTH_WEIGHT
-        )
+        assert composite_score(
+            semantic=-0.1, freshness=1.0, health=1.0, quality=1.0,
+        ) == pytest.approx(FRESHNESS_WEIGHT + HEALTH_WEIGHT + QUALITY_WEIGHT)
 
     def test_clamps_semantic_above_one(self):
         # Defensive: floating-point can drift slightly above 1.0; cap it.
-        assert composite_score(semantic=1.01, freshness=0.0, health=0.0) <= 1.0
+        assert composite_score(
+            semantic=1.01, freshness=0.0, health=0.0, quality=0.0,
+        ) <= 1.0
 
 
 class TestCompositeRanksAsExpected:
@@ -162,14 +231,27 @@ class TestCompositeRanksAsExpected:
     weights, but the *ordering* is what the BAP relies on."""
 
     def test_fresh_healthy_beats_stale_healthy_at_same_similarity(self):
-        fresh = composite_score(semantic=0.5, freshness=1.0, health=1.0)
-        stale = composite_score(semantic=0.5, freshness=0.0, health=1.0)
+        fresh = composite_score(semantic=0.5, freshness=1.0, health=1.0, quality=0.5)
+        stale = composite_score(semantic=0.5, freshness=0.0, health=1.0, quality=0.5)
         assert fresh > stale
 
     def test_healthy_beats_unhealthy_at_same_similarity(self):
-        healthy = composite_score(semantic=0.5, freshness=0.5, health=1.0)
-        unhealthy = composite_score(semantic=0.5, freshness=0.5, health=0.0)
+        healthy   = composite_score(semantic=0.5, freshness=0.5, health=1.0, quality=0.5)
+        unhealthy = composite_score(semantic=0.5, freshness=0.5, health=0.0, quality=0.5)
         assert healthy > unhealthy
+
+    def test_well_rated_beats_poorly_rated_at_same_similarity(self):
+        well   = composite_score(semantic=0.5, freshness=0.5, health=0.5, quality=1.0)
+        poorly = composite_score(semantic=0.5, freshness=0.5, health=0.5, quality=0.0)
+        assert well > poorly
+
+    def test_quality_outranks_freshness_alone(self):
+        # Same semantic + health, the agent with high quality + low
+        # freshness should beat the agent with low quality + max
+        # freshness — because QUALITY_WEIGHT > FRESHNESS_WEIGHT.
+        rated = composite_score(semantic=0.4, freshness=0.0, health=0.5, quality=1.0)
+        fresh = composite_score(semantic=0.4, freshness=1.0, health=0.5, quality=0.0)
+        assert rated > fresh
 
     def test_high_semantic_dominates_freshness_and_health(self):
         # A perfectly-relevant brand-new healthy agent should outrank a
