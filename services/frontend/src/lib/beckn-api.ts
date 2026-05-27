@@ -22,6 +22,21 @@ export interface DiscoveredAgent {
   modalities: string[];
   jurisdiction: string | null;
   provider: string;
+  // Composite ranking exposed by the CDS (mock-network/discover). Optional
+  // because older /discover responses won't have these fields yet — the
+  // frontend renders the breakdown only when present.
+  score?: number;
+  scoreComponents?: ScoreComponents;
+}
+
+export interface ScoreComponents {
+  semantic: number;
+  freshness: number;
+  health: number;
+  // The quality component lands once the rate-end-to-end PR is merged.
+  // Until then we treat it as optional.
+  quality?: number;
+  ratingCount?: number;
 }
 
 export interface Skill {
@@ -179,6 +194,27 @@ export async function discover(query?: string): Promise<DiscoveredAgent[]> {
     const caps = (ra.capabilities ?? {}) as Record<string, unknown>;
     const skills: Skill[] = (ra.skills ?? []) as Skill[];
 
+    // Marketplace ranking signals — keys start with underscore on the wire
+    // to distinguish them from AgentFacts the BPP declared. Surface them as
+    // first-class fields on the agent so the UI can render the breakdown
+    // without re-digging into resourceAttributes.
+    const marketplaceScore = ra._marketplaceScore;
+    const rawComponents = ra._marketplaceScoreComponents as Record<string, unknown> | undefined;
+    let scoreComponents: ScoreComponents | undefined;
+    if (rawComponents) {
+      scoreComponents = {
+        semantic: Number(rawComponents.semantic ?? 0),
+        freshness: Number(rawComponents.freshness ?? 0),
+        health: Number(rawComponents.health ?? 0),
+      };
+      if (rawComponents.quality !== undefined) {
+        scoreComponents.quality = Number(rawComponents.quality);
+      }
+      if (rawComponents.ratingCount !== undefined) {
+        scoreComponents.ratingCount = Number(rawComponents.ratingCount);
+      }
+    }
+
     return {
       id: r.id,
       offerId: offerMap.get(r.id) ?? `offer-${r.id}`,
@@ -199,6 +235,8 @@ export async function discover(query?: string): Promise<DiscoveredAgent[]> {
       modalities: (caps.modalities ?? ['text']) as string[],
       jurisdiction: ra.jurisdiction ? String(ra.jurisdiction) : null,
       provider: String((ra.provider as Record<string, string>)?.name || 'Unknown Provider'),
+      score: marketplaceScore !== undefined ? Number(marketplaceScore) : undefined,
+      scoreComponents,
     };
   });
 }
@@ -254,6 +292,49 @@ export async function pollStatus(txnId: string): Promise<ContractData> {
   return (cb.message as { contract?: ContractData }).contract ?? {};
 }
 
+/**
+ * Submit a buyer rating against a completed transaction.
+ *
+ * The BAP endpoint accepts a 1..5 score plus optional free-form
+ * feedback. Re-rating the same target on the same transaction
+ * overwrites (BAP-side upsert), so callers don't need to track
+ * "already rated" state defensively.
+ *
+ * Returns the on_rate confirmation envelope or throws if the BAP
+ * itself rejects the rating (e.g. unknown transaction → 404, score
+ * out of range → 422). ONIX-side NACKs return a 200 + NACK body —
+ * we surface that as an error so the UI can show a clear failure.
+ */
+export async function rateContract(
+  txnId: string,
+  score: number,
+  options: { feedback?: string; targetId?: string } = {},
+): Promise<{ ack: 'ACK' | 'NACK'; error?: { code: string; message: string } }> {
+  const body: Record<string, unknown> = {
+    transaction_id: txnId,
+    score,
+  };
+  if (options.feedback) body.feedback = options.feedback;
+  if (options.targetId) body.target_id = options.targetId;
+
+  const res = await fetch(`${API}/contracts/rate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`Rate failed (${res.status}): ${detail.slice(0, 240)}`);
+  }
+  const data = await res.json();
+  const ack = data?.onix_response?.message?.ack?.status as 'ACK' | 'NACK' | undefined;
+  const error = data?.onix_response?.error as { code: string; message: string } | undefined;
+  if (ack === 'NACK') {
+    throw new Error(`Network rejected the rating: ${error?.code || 'NACK'} — ${error?.message || ''}`);
+  }
+  return { ack: ack ?? 'ACK', error };
+}
+
 export { iconForAgent };
 
 // ── Raw types for parsing ──────────────────────────────────
@@ -277,6 +358,8 @@ interface ResourceRaw {
     capabilities?: Record<string, unknown>;
     jurisdiction?: string;
     provider?: { name: string; url?: string };
+    _marketplaceScore?: number;
+    _marketplaceScoreComponents?: Record<string, unknown>;
   };
 }
 
