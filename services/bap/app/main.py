@@ -14,10 +14,14 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.config import SERVICE_NAME, PORT
+from app.limiter import limiter
 from app.routes.webhook import router as webhook_router
 from app.routes.api import router as api_router
+from app.routes.plan import router as plan_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,8 +43,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Rate limiting — only applied to routes decorated with @limiter.limit.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 app.include_router(webhook_router)
 app.include_router(api_router)
+app.include_router(plan_router)
 
 
 @app.exception_handler(httpx.ConnectError)
