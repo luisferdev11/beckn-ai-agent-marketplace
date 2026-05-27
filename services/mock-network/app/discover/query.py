@@ -10,17 +10,19 @@ Pipeline:
 
   Stage 2 — Semantic ranking (pgvector cosine)
             When the query carries a ``text_search``, we embed it once and
-            order by ``embedding <=> $query_vec``. Without text_search we
-            fall back to ``published_at DESC`` (most recently published
-            agents first) which is a sensible default for browse-style
-            requests.
+            order by ``embedding <=> $query_vec``. Without text_search the
+            ``similarity`` component is 0.0 for every row and ordering
+            collapses onto freshness + health.
 
-The composite scoring described in the briefing
-(``semantic × 0.6 + freshness × 0.2 + health × 0.2``) is deliberately
-NOT implemented here — that needs the Registry health signal joined in,
-which is a Pieza 4 concern. We expose only ``similarity`` for now and
-sort by it; future work plugs the rest in without changing the SQL
-shape (the candidate set stays the same).
+  Stage 3 — Composite scoring
+            ``score = 0.6 * semantic + 0.2 * freshness + 0.2 * health``
+            Computed inline in SQL using the constants from
+            ``app.discover.scoring`` so the formula has a single source of
+            truth. The JOIN against ``subscribers`` brings in the
+            Registry health signal. ``LEFT JOIN`` is intentional: an
+            agent indexed for a deprecated BPP still surfaces — its
+            ``bpp_health`` falls back to ``unknown`` and gets the
+            neutral 0.5 contribution.
 """
 from __future__ import annotations
 
@@ -30,17 +32,23 @@ from typing import Optional
 
 from app.db.pool import get_pool
 from app.discover.models import DiscoverQuery, StructuredFilters
+from app.discover.scoring import (
+    FRESHNESS_WEIGHT,
+    FRESHNESS_WINDOW_DAYS,
+    HEALTH_WEIGHT,
+    SEMANTIC_WEIGHT,
+)
 from app.embeddings.service import EmbeddingService, get_default_service
 
 logger = logging.getLogger(__name__)
 
 
 _CANDIDATE_COLUMNS = """
-    id, agent_urn, version, bpp_subscriber_id, beckn_id, agentfacts_id,
-    label, description, jurisdiction, languages, capability_tags,
-    input_modes, output_modes,
-    pricing_currency, pricing_value, sla_max_latency_ms,
-    agent_facts, published_at
+    av.id, av.agent_urn, av.version, av.bpp_subscriber_id, av.beckn_id, av.agentfacts_id,
+    av.label, av.description, av.jurisdiction, av.languages, av.capability_tags,
+    av.input_modes, av.output_modes,
+    av.pricing_currency, av.pricing_value, av.sla_max_latency_ms,
+    av.agent_facts, av.published_at
 """
 
 
@@ -96,22 +104,55 @@ async def retrieve_candidates(
 
     params = build_filter_params(query.filters)
 
+    # Composite-score SQL.
+    #
+    # ``ranked`` projects per-row similarity, freshness, and a numeric
+    # health value from the Registry. The outer SELECT adds the composite
+    # ``score`` using the same weights as ``app.discover.scoring`` so the
+    # formula stays single-sourced (weights are baked into the string;
+    # changing them in scoring.py is a one-place edit that picks up here
+    # via the f-string).
+    #
+    # GREATEST/LEAST clamp pgvector's similarity into 0..1 — cosine
+    # similarity occasionally drifts microscopically outside that range
+    # for unit-vector inputs.
     sql = f"""
+        WITH ranked AS (
+            SELECT
+                {_CANDIDATE_COLUMNS},
+                CASE
+                    WHEN $1::vector IS NULL THEN 0.0::float8
+                    ELSE GREATEST(0.0::float8, LEAST(1.0::float8, 1 - (av.embedding <=> $1)))
+                END AS similarity,
+                COALESCE(s.health, 'unknown') AS bpp_health,
+                GREATEST(0.0::float8, LEAST(1.0::float8,
+                    1 - EXTRACT(EPOCH FROM (NOW() - av.published_at))
+                        / ({FRESHNESS_WINDOW_DAYS}::float8 * 86400.0)
+                )) AS freshness,
+                CASE COALESCE(s.health, 'unknown')
+                    WHEN 'healthy'   THEN 1.0::float8
+                    WHEN 'degraded'  THEN 0.5::float8
+                    WHEN 'unhealthy' THEN 0.0::float8
+                    ELSE 0.5::float8
+                END AS health_value
+            FROM agent_versions av
+            LEFT JOIN subscribers s ON av.bpp_subscriber_id = s.subscriber_id
+            WHERE av.status = 'current'
+              AND ($2::text     IS NULL OR av.jurisdiction       = $2)
+              AND ($3::text[]   IS NULL OR av.languages          @> $3)
+              AND ($4::text[]   IS NULL OR av.capability_tags    @> $4)
+              AND ($5::char(3)  IS NULL OR av.pricing_currency   = $5)
+              AND ($6::numeric  IS NULL OR av.pricing_value     <= $6)
+              AND ($7::int      IS NULL OR av.sla_max_latency_ms<= $7)
+        )
         SELECT
-            {_CANDIDATE_COLUMNS},
-            CASE
-                WHEN $1::vector IS NULL THEN 0.0
-                ELSE 1 - (embedding <=> $1)
-            END AS similarity
-        FROM agent_versions
-        WHERE status = 'current'
-          AND ($2::text     IS NULL OR jurisdiction       = $2)
-          AND ($3::text[]   IS NULL OR languages          @> $3)
-          AND ($4::text[]   IS NULL OR capability_tags    @> $4)
-          AND ($5::char(3)  IS NULL OR pricing_currency   = $5)
-          AND ($6::numeric  IS NULL OR pricing_value     <= $6)
-          AND ($7::int      IS NULL OR sla_max_latency_ms<= $7)
-        ORDER BY similarity DESC, published_at DESC
+            ranked.*,
+            ({SEMANTIC_WEIGHT}::float8 * similarity
+             + {FRESHNESS_WEIGHT}::float8 * freshness
+             + {HEALTH_WEIGHT}::float8 * health_value
+            ) AS score
+        FROM ranked
+        ORDER BY score DESC, published_at DESC
         LIMIT $8
     """
 
@@ -134,6 +175,9 @@ async def retrieve_candidates(
         d = dict(r)
         d["agent_facts"] = _parse_jsonb(d.get("agent_facts"))
         d["similarity"] = float(d.get("similarity") or 0.0)
+        d["freshness"] = float(d.get("freshness") or 0.0)
+        d["health_value"] = float(d.get("health_value") or 0.5)
+        d["score"] = float(d.get("score") or 0.0)
         d["languages"] = list(d.get("languages") or [])
         d["capability_tags"] = list(d.get("capability_tags") or [])
         d["input_modes"] = list(d.get("input_modes") or [])

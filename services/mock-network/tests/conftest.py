@@ -317,7 +317,14 @@ def fake_discover_index(monkeypatch):
     seeding ``store.rows`` with the candidate dicts they want returned.
     The fake honours the structured filters and respects the ``limit``
     so tests can verify the route honours them too.
+
+    Composite ranking: rows may carry ``published_at`` and ``bpp_health``
+    so tests can exercise the composite-score ordering. When omitted, the
+    fake supplies neutral defaults (now-published, ``unknown`` health) so
+    legacy tests that only care about filters keep working.
     """
+    from app.discover import scoring
+
     class _Store:
         def __init__(self):
             self.rows: list[dict] = []
@@ -327,8 +334,8 @@ def fake_discover_index(monkeypatch):
 
     async def _retrieve(query, *, embedder=None):
         store.last_query = query
-        filtered = []
         f = query.filters
+        filtered: list[dict] = []
         for row in store.rows:
             if f.jurisdiction and row.get("jurisdiction") != f.jurisdiction:
                 continue
@@ -344,9 +351,24 @@ def fake_discover_index(monkeypatch):
             ml = row.get("sla_max_latency_ms")
             if f.max_latency_ms is not None and ml is not None and ml > f.max_latency_ms:
                 continue
-            filtered.append({**row, "similarity": row.get("similarity", 0.0)})
-        if query.text_search:
-            filtered.sort(key=lambda r: r.get("similarity", 0.0), reverse=True)
+            similarity = float(row.get("similarity") or 0.0)
+            freshness = scoring.freshness_score(published_at=row.get("published_at"))
+            health = scoring.health_score(row.get("bpp_health"))
+            score = scoring.composite_score(
+                semantic=similarity, freshness=freshness, health=health
+            )
+            filtered.append({
+                **row,
+                "similarity": similarity,
+                "bpp_health": row.get("bpp_health") or "unknown",
+                "freshness": freshness,
+                "health_value": health,
+                "score": score,
+            })
+        filtered.sort(
+            key=lambda r: (r["score"], r.get("similarity", 0.0)),
+            reverse=True,
+        )
         return filtered[: query.limit]
 
     from app.discover import query as discover_query
