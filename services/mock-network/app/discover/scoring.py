@@ -2,19 +2,20 @@
 
 Formula (briefing §3.2 / ROADMAP "Bloqueante for production-minimal"):
 
-    score = SEMANTIC_WEIGHT  * semantic_similarity
-          + FRESHNESS_WEIGHT * freshness_score(published_at)
-          + HEALTH_WEIGHT    * health_score(subscriber.health)
+    score = SEMANTIC_WEIGHT   * semantic_similarity
+          + FRESHNESS_WEIGHT  * freshness_score(published_at)
+          + HEALTH_WEIGHT     * health_score(subscriber.health)
+          + QUALITY_WEIGHT    * quality_score(avg_rating)
 
 The functions take primitive inputs (similarity floats, datetimes, raw
-``health`` strings) so they unit-test cleanly without a DB or embedder.
-The caller (``app.discover.query``) is responsible for collecting these
-inputs via SQL and assembling the score per row.
+``health`` strings, raw 1..5 ratings) so they unit-test cleanly without
+a DB or embedder. The caller (``app.discover.query``) is responsible
+for collecting these inputs via SQL and assembling the score per row.
 
-Why split into three pure functions rather than collapse into one SQL
+Why split into pure functions rather than collapse into one SQL
 expression: keeping the math in Python gives us readable scoring rules,
-exact unit tests, and the freedom to change the freshness curve without
-a migration. The candidate set returned by SQL is already small (filters
+exact unit tests, and the freedom to tune any curve without a
+migration. The candidate set returned by SQL is already small (filters
 shrink it before scoring), so the extra Python work is negligible.
 """
 from __future__ import annotations
@@ -24,12 +25,27 @@ from typing import Optional
 
 
 # Weights. Changing these is a deliberate, observable change — tests pin
-# the ratios (semantic dominant, freshness == health).
-SEMANTIC_WEIGHT: float = 0.6
-FRESHNESS_WEIGHT: float = 0.2
-HEALTH_WEIGHT: float = 0.2
+# the ratios (semantic dominant; freshness == health; quality between
+# the two extremes — high enough that healthy + fresh + well-rated
+# beats healthy + fresh + cold-start, low enough that a single 5-star
+# rating cannot launder away a poor semantic match).
+SEMANTIC_WEIGHT: float = 0.5
+FRESHNESS_WEIGHT: float = 0.15
+HEALTH_WEIGHT: float = 0.15
+QUALITY_WEIGHT: float = 0.2
 
 FRESHNESS_WINDOW_DAYS: int = 90
+
+# Default 1..5 user-rating scale. Surface as constants so the SQL and
+# the cold-start default cannot drift apart.
+QUALITY_SCALE_MIN: float = 1.0
+QUALITY_SCALE_MAX: float = 5.0
+
+# Cold-start quality default. Agents with zero ratings sit at 0.5
+# (neutral) so a brand-new agent is neither punished nor rewarded
+# relative to peers with real-world data — the briefing's flywheel
+# kicks in as ratings accumulate.
+QUALITY_DEFAULT: float = 0.5
 
 # Registry ``subscribers.health`` → numeric contribution.
 # ``unknown`` and missing values default to neutral (0.5) so a brand-new
@@ -86,14 +102,54 @@ def health_score(health: Optional[str]) -> float:
     return _HEALTH_MAP.get(health, _HEALTH_DEFAULT)
 
 
-def composite_score(*, semantic: float, freshness: float, health: float) -> float:
-    """Combine the three component scores with the static weights.
+def quality_score(
+    *,
+    avg_rating: Optional[float],
+    rating_count: int = 0,
+    scale_min: float = QUALITY_SCALE_MIN,
+    scale_max: float = QUALITY_SCALE_MAX,
+) -> float:
+    """Normalise the rolling average rating into 0..1.
+
+    - ``rating_count == 0`` or ``avg_rating is None`` → ``QUALITY_DEFAULT``
+      (cold start). The agent is neither rewarded nor punished until
+      real-world ratings accumulate.
+    - Otherwise: ``(avg - scale_min) / (scale_max - scale_min)`` clamped
+      to [0, 1]. The scale is parameterised so a partner that uses a
+      different rating range (1..10, 0..100) just needs to publish that
+      range and the marketplace adapts.
+    """
+    if rating_count <= 0 or avg_rating is None:
+        return QUALITY_DEFAULT
+    if scale_max <= scale_min:
+        return QUALITY_DEFAULT
+    normalised = (float(avg_rating) - scale_min) / (scale_max - scale_min)
+    return _clamp(normalised)
+
+
+def composite_score(
+    *,
+    semantic: float,
+    freshness: float,
+    health: float,
+    quality: float = QUALITY_DEFAULT,
+) -> float:
+    """Combine the four component scores with the static weights.
 
     Inputs are clamped to ``[0.0, 1.0]`` so pgvector's occasionally-noisy
     cosine output (mildly negative or slightly above 1.0) cannot produce
-    a composite outside the documented range.
+    a composite outside the documented range. ``quality`` keeps a
+    default so legacy call sites that haven't been wired to the new
+    aggregator yet still produce a valid composite — they fall back to
+    neutral quality contribution.
     """
     s = _clamp(semantic)
     f = _clamp(freshness)
     h = _clamp(health)
-    return SEMANTIC_WEIGHT * s + FRESHNESS_WEIGHT * f + HEALTH_WEIGHT * h
+    q = _clamp(quality)
+    return (
+        SEMANTIC_WEIGHT * s
+        + FRESHNESS_WEIGHT * f
+        + HEALTH_WEIGHT * h
+        + QUALITY_WEIGHT * q
+    )
