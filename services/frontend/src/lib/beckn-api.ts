@@ -169,11 +169,27 @@ function iconForAgent(name: string): string {
 
 // ── API calls ──────────────────────────────────────────────
 
-export async function discover(query?: string): Promise<DiscoveredAgent[]> {
+/**
+ * Discover agents matching a natural-language prompt.
+ *
+ * Calls BAP /api/contracts/discover with ``intent_text`` (preferred semantic
+ * path — gets embedded server-side and ranked by cosine similarity). After
+ * the sync ACK, polls /api/callbacks/ultimo for the asynchronous on_discover
+ * callback and flattens every catalog (one per BPP) into a single ranked list.
+ *
+ * The CDS returns one on_discover envelope with N catalogs, one per matching
+ * provider. We flatten across providers while preserving per-catalog
+ * ordering (the CDS already ranks within each catalog by semantic similarity).
+ *
+ * @param prompt  Natural-language task description. Empty string returns
+ *                most-recently-published agents (browse mode).
+ */
+export async function discover(prompt?: string): Promise<DiscoveredAgent[]> {
+  const intentText = (prompt ?? '').trim();
   const res = await fetch(`${API}/contracts/discover`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query: query || undefined }),
+    body: JSON.stringify(intentText ? { intent_text: intentText } : {}),
   });
   const { transactionId } = await res.json();
   const cb = await pollCallback(transactionId, 'on_discover');

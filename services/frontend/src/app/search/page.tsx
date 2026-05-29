@@ -39,6 +39,55 @@ const PLACEHOLDER_BY_MODE: Record<Mode, string> = {
 
 const RESIDENCY_MAP: Record<string, string> = { India: 'IN', US: 'US', EU: 'EU' };
 
+// ── Mapping helpers ────────────────────────────────────────
+//
+// The frontend filter UI uses display-friendly country/language names,
+// while the CDS stores ISO-3166-alpha-3 jurisdictions and ISO-639-1
+// language codes inside AgentFacts. We map at filter time so the
+// DiscoveredAgent contract stays unchanged.
+
+// Maps both ISO-3166 alpha-3 (preferred — set in our migrations) and the
+// alpha-2 codes some legacy seeds still use, so the filter UI stays usable
+// no matter which the BPP declared.
+const COUNTRY_BY_JURISDICTION: Record<string, string> = {
+  IND: 'India',     IN: 'India',
+  USA: 'United States', US: 'United States',
+  MEX: 'Mexico',    MX: 'Mexico',
+  GBR: 'United Kingdom', GB: 'United Kingdom',
+  SGP: 'Singapore', SG: 'Singapore',
+  ARE: 'United Arab Emirates', AE: 'United Arab Emirates',
+};
+
+const LANGUAGE_BY_CODE: Record<string, string> = {
+  en: 'English',
+  hi: 'Hindi',
+  es: 'Spanish',
+  fr: 'French',
+  de: 'German',
+  pt: 'Portuguese',
+  ja: 'Japanese',
+  ar: 'Arabic',
+  ta: 'Tamil',
+  zh: 'Chinese',
+};
+
+function dataResidencyOf(agent: DiscoveredAgent): string {
+  if (!agent.jurisdiction) return 'Unknown';
+  return COUNTRY_BY_JURISDICTION[agent.jurisdiction] ?? agent.jurisdiction;
+}
+
+function capabilitiesOf(agent: DiscoveredAgent): string[] {
+  return agent.skills.map(s => s.id).filter(Boolean);
+}
+
+function languagesOf(agent: DiscoveredAgent): string[] {
+  const codes = new Set<string>();
+  for (const skill of agent.skills) {
+    for (const code of skill.supportedLanguages ?? []) codes.add(code);
+  }
+  return Array.from(codes).map(c => LANGUAGE_BY_CODE[c] ?? c);
+}
+
 export default function SearchPage() {
   const [mode, setMode] = useState<Mode>('browse');
   const [query, setQuery] = useState('');
@@ -49,6 +98,10 @@ export default function SearchPage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<DiscoveredAgent | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [agents, setAgents] = useState<DiscoveredAgent[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [totalIndexed, setTotalIndexed] = useState<number | null>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -245,6 +298,7 @@ export default function SearchPage() {
               onKeyDown={handleKeyDown}
               placeholder={PLACEHOLDER_BY_MODE[mode]}
               rows={2}
+              disabled={loading}
               style={{
                 width: '100%',
                 background: 'transparent',
@@ -254,6 +308,7 @@ export default function SearchPage() {
                 lineHeight: 1.6, resize: 'none',
                 outline: 'none',
                 caretColor: 'var(--accent)',
+                opacity: loading ? 0.6 : 1,
               }}
             />
 
@@ -268,15 +323,18 @@ export default function SearchPage() {
                   <button
                     key={prompt}
                     onClick={() => setQuery(prompt)}
+                    disabled={loading}
                     style={{
                       padding: '4px 10px', borderRadius: 4,
                       background: 'var(--bg-elevated)',
                       border: '1px solid var(--border-subtle)',
                       color: 'var(--text-secondary)',
                       fontFamily: 'var(--font-plex)', fontSize: 12, fontWeight: 400,
-                      cursor: 'pointer', transition: 'all 0.15s', whiteSpace: 'nowrap',
+                      cursor: loading ? 'not-allowed' : 'pointer', transition: 'all 0.15s',
+                      whiteSpace: 'nowrap', opacity: loading ? 0.5 : 1,
                     }}
                     onMouseEnter={e => {
+                      if (loading) return;
                       const el = e.currentTarget as HTMLElement;
                       el.style.color = 'var(--accent)';
                       el.style.borderColor = 'rgba(0,124,195,0.3)';
