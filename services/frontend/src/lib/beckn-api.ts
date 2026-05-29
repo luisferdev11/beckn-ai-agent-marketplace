@@ -22,6 +22,12 @@ export interface DiscoveredAgent {
   modalities: string[];
   jurisdiction: string | null;
   provider: string;
+  // BPP routing — populated from each catalog's ``provider`` block so the
+  // BAP knows which BPP to address on subsequent select/init/confirm.
+  // Without these the BAP falls back to its statically-configured
+  // default BPP and mis-routes any pick that is not the default.
+  bppId: string;
+  bppUri?: string;
   // Composite ranking exposed by the CDS (mock-network/discover). Optional
   // because older /discover responses won't have these fields yet — the
   // frontend renders the breakdown only when present.
@@ -37,12 +43,6 @@ export interface ScoreComponents {
   // Until then we treat it as optional.
   quality?: number;
   ratingCount?: number;
-  // BPP routing — populated from each catalog's ``provider`` block so the
-  // BAP knows which BPP to address on subsequent select/init/confirm.
-  // Without these the BAP falls back to its statically-configured
-  // default BPP and mis-routes any pick that is not the default.
-  bppId: string;
-  bppUri?: string;
 }
 
 export interface Skill {
@@ -126,6 +126,55 @@ interface RawCallback {
   message: string | Record<string, unknown>;
   received_at: string;
   error?: string;
+}
+
+// ── Planner types (mirror libs/beckn_models/beckn_models/planning.py) ─
+
+export interface StepRecommendation {
+  agent_id: string;
+  name: string;
+  provider: string;
+  cost: number;
+  currency: string;
+  latency_ms: number;
+  reason: string;
+}
+
+export interface StepAlternative {
+  agent_id: string;
+  name: string;
+  cost: number;
+  latency_ms: number;
+  note: string;
+}
+
+export interface PlanStep {
+  id: string;
+  skill_id: string;
+  depends_on: string[];
+  recommended: StepRecommendation;
+  alternatives: StepAlternative[];
+  input_mapping: Record<string, string>;
+}
+
+export interface PlanEstimates {
+  total_cost: number;
+  currency: string;
+  max_latency_ms: number;
+  steps_count: number;
+}
+
+export interface Plan {
+  summary: string;
+  steps: PlanStep[];
+  estimates: PlanEstimates;
+  on_error: string;
+}
+
+export interface PlanResponse {
+  plan?: Plan | null;
+  error?: string | null;
+  transaction_ids: string[];
 }
 
 // ── Helpers ────────────────────────────────────────────────
@@ -374,6 +423,51 @@ export async function rateContract(
     throw new Error(`Network rejected the rating: ${error?.code || 'NACK'} — ${error?.message || ''}`);
   }
   return { ack: ack ?? 'ACK', error };
+}
+
+/**
+ * Compose a multi-step workflow plan from a natural-language prompt.
+ *
+ * Calls BAP /api/plan, which internally orchestrates:
+ *   1. POST /extract-skills on the planner (LLM #1)
+ *   2. POST /api/contracts/discover in parallel, one per skill
+ *   3. POST /compose-pipeline on the planner (LLM #2 + validator)
+ *
+ * Unlike discover(), the call is synchronous from the frontend's POV — the
+ * BAP holds the request open until the full plan is composed (can take
+ * 5-15s due to two LLM hops + discover round-trips). No callback polling.
+ *
+ * Throws on transport errors or non-2xx responses with a backend-provided
+ * detail message. A 2xx with `plan: null` and `error: "..."` means the
+ * planner reported a soft failure (e.g. no candidates for some skill) —
+ * we surface that as a thrown error too so the UI's error path handles it.
+ */
+export async function plan(prompt: string): Promise<Plan> {
+  const res = await fetch(`${API}/plan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      prompt: prompt.trim(),
+      input_format: 'text/plain',
+      output_format: 'text/plain',
+    }),
+  });
+  if (!res.ok) {
+    let detail = `Plan failed (${res.status})`;
+    try {
+      const body = await res.json();
+      if (typeof body?.detail === 'string') detail = body.detail;
+      else if (body?.detail) detail = JSON.stringify(body.detail);
+    } catch {
+      // Fall through to status-code-only message.
+    }
+    throw new Error(detail);
+  }
+  const data = (await res.json()) as PlanResponse;
+  if (!data.plan) {
+    throw new Error(data.error || 'Planner returned no plan');
+  }
+  return data.plan;
 }
 
 export { iconForAgent };
