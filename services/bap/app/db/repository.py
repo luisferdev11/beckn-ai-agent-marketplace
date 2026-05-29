@@ -195,3 +195,43 @@ async def get_all_transactions():
     pool = await get_pool()
     rows = await pool.fetch("SELECT * FROM contracts ORDER BY created_at DESC LIMIT 100")
     return [dict(r) for r in rows]
+
+
+async def record_rating_sent(
+    *,
+    transaction_id: str,
+    target_id: str,
+    target_type: str,
+    score: float,
+    score_min: float,
+    score_max: float,
+    feedback: str | None,
+    bpp_id: str | None,
+) -> dict:
+    """Upsert a rating into ``ratings_sent``.
+
+    Re-rating the same (transaction, target) overwrites the previous
+    score and timestamp — the BAP keeps one row per buyer intent so the
+    UI can show "this is what you submitted last" without dedupe logic.
+    """
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        """
+        INSERT INTO ratings_sent (transaction_id, target_id, target_type,
+                                  score, score_min, score_max, feedback,
+                                  bpp_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT (transaction_id, target_id, target_type) DO UPDATE
+        SET score = EXCLUDED.score,
+            score_min = EXCLUDED.score_min,
+            score_max = EXCLUDED.score_max,
+            feedback = EXCLUDED.feedback,
+            bpp_id = EXCLUDED.bpp_id,
+            submitted_at = NOW()
+        RETURNING id, transaction_id, target_id, target_type, score,
+                  score_min, score_max, feedback, bpp_id, submitted_at
+        """,
+        transaction_id, target_id, target_type,
+        score, score_min, score_max, feedback, bpp_id,
+    )
+    return dict(row) if row else {}

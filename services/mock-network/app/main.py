@@ -24,6 +24,7 @@ from app.config import SERVICE_NAME
 from app.db.pool import close_pool, get_pool
 from app.dedi.routes import router as dedi_router
 from app.discover.routes import router as discover_router
+from app.ratings.routes import router as ratings_router
 from app.registry import liveness
 from app.registry.routes import router as registry_router
 
@@ -94,3 +95,4 @@ app.include_router(registry_router)
 app.include_router(catalog_router)
 app.include_router(discover_router)
 app.include_router(cds_operator_router)
+app.include_router(ratings_router)

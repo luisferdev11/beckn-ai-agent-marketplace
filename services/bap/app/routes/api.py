@@ -30,7 +30,7 @@ from app.store import (
     get_all_callbacks, get_last_callback, get_callbacks_count,
     get_all_transactions, get_transaction, get_transaction_contract,
     set_transaction_target, get_transaction_target,
-    create_draft_contract, contract_exists,
+    create_draft_contract, contract_exists, record_rating_sent,
 )
 
 logger = logging.getLogger(__name__)
@@ -444,6 +444,122 @@ async def discover(req: DiscoverRequest):
     return {"transactionId": txn_id, "onix_response": result}
 
 
+class RateRequest(BaseModel):
+    """Buyer-side rate submission.
+
+    Beckn v2 supports rating any "ratable entity" (contract, item,
+    fulfillment, provider, agent). We default to rating the agent that
+    fulfilled the contract — that's what powers the marketplace's trust
+    score — but ``target_type`` can be overridden if a caller needs to
+    rate the provider or the contract as a whole.
+
+    Score range is fixed at [1.0, 5.0] (industry-standard 5-star scale).
+    Surfacing ``range.min``/``range.max`` in the on-wire payload lets the
+    BPP know what scale it was rated on without negotiating.
+    """
+    transaction_id: str
+    score: float
+    target_id: Optional[str] = None
+    target_type: str = "agent"
+    feedback: Optional[str] = None
+    bpp_id: Optional[str] = None
+    bpp_uri: Optional[str] = None
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, *args, **kwargs):
+        # Fall back to default; constraints enforced below via field
+        # validators rather than json-schema to keep the failure mode
+        # as 422 ValidationError.
+        return super().__get_pydantic_core_schema__(*args, **kwargs)
+
+
+@router.post("/contracts/rate")
+async def rate(req: RateRequest):
+    """Submit a buyer rating for one entity in a completed transaction.
+
+    The endpoint:
+      1. requires a prior /select (same gate as init/confirm/status),
+      2. upserts the rating into ``ratings_sent`` so the buyer can see
+         their own history and re-rating overwrites,
+      3. POSTs a Beckn v2 ``rate`` envelope to ONIX with
+         ``message.ratingInputs`` matching the spec's RatingInput shape.
+    """
+    if not (1.0 <= req.score <= 5.0):
+        # 422 is the right code for value-out-of-range; matches Pydantic's
+        # default ValidationError shape so the frontend can handle it
+        # uniformly with missing-field errors.
+        raise HTTPException(
+            status_code=422,
+            detail=[{
+                "type": "value_error",
+                "loc": ["body", "score"],
+                "msg": "score must be between 1.0 and 5.0 (inclusive)",
+                "input": req.score,
+            }],
+        )
+
+    await _require_known_transaction(req.transaction_id, "rate")
+
+    contract = await get_transaction_contract(req.transaction_id)
+    bpp_id, bpp_uri = _resolve_bpp_target(req.bpp_id, req.bpp_uri, req.transaction_id)
+    ctx = _build_context("rate", req.transaction_id, bpp_id, bpp_uri)
+
+    target_id = req.target_id or _extract_default_target(contract) or "agent-unknown"
+
+    # Persist locally first — if ONIX is unreachable we still want a
+    # record of the buyer's intent (they can re-submit).
+    await record_rating_sent(
+        transaction_id=req.transaction_id,
+        target_id=target_id,
+        target_type=req.target_type,
+        score=req.score,
+        score_min=1.0,
+        score_max=5.0,
+        feedback=req.feedback,
+        bpp_id=bpp_id,
+    )
+
+    rating_input: dict = {
+        "target": {
+            "id": target_id,
+            "descriptor": {"code": req.target_type, "name": f"AI {req.target_type}"},
+        },
+        "range": {"min": 1.0, "max": 5.0, "value": float(req.score)},
+    }
+    if req.feedback:
+        # FormSubmission shape per Beckn v2 spec: ``data`` is a
+        # string-to-string key-value map. We use a single "review" key
+        # for free-form text feedback; richer questionnaires can add
+        # more keys without changing the wire shape.
+        rating_input["feedbackFormSubmission"] = {
+            "data": {"review": req.feedback},
+        }
+
+    payload = {
+        "context": ctx,
+        "message": {"ratingInputs": [rating_input]},
+    }
+
+    result = await _send_to_onix("rate", payload)
+    return {"transactionId": req.transaction_id, "onix_response": result}
+
+
+def _extract_default_target(contract: dict) -> str | None:
+    """Pull the first agent id from a stored contract's commitments.
+
+    Used so a buyer can call /rate without specifying ``target_id`` —
+    the most common case is "rate the agent I just used". Returns None
+    if the contract has no commitments yet (e.g. rating before any
+    on_select arrived), in which case the caller must specify target_id.
+    """
+    for commitment in contract.get("commitments") or []:
+        for resource in commitment.get("resources") or []:
+            rid = resource.get("id")
+            if rid:
+                return rid
+    return None
+
+
 @router.post("/contracts/cancel")
 async def cancel(req: TxnRequest):
     """Cancel an active transaction."""
@@ -452,11 +568,18 @@ async def cancel(req: TxnRequest):
     bpp_id, bpp_uri = _resolve_bpp_target(req.bpp_id, req.bpp_uri, req.transaction_id)
     ctx = _build_context("cancel", req.transaction_id, bpp_id, bpp_uri)
 
+    # Beckn v2 schema:
+    #   - Commitment.status.code enum: {DRAFT, ACTIVE, CLOSED}
+    #   - Contract.status.code enum:   {DRAFT, ACTIVE, CANCELLED, COMPLETE}
+    # Contract has additionalProperties:false so a free-form `reason`
+    # cannot ride here; if we need to surface a reason on the wire we'd
+    # need to wrap it in a JSON-LD `contractAttributes` object — not
+    # done yet because no consumer needs it.
     commitments = contract.get("commitments", [])
     if not commitments:
-        commitments = [{"id": "commitment-001", "status": {"descriptor": {"code": "CANCELLED"}}}]
+        commitments = [{"id": "commitment-001", "status": {"descriptor": {"code": "CLOSED"}}}]
     else:
-        commitments = [{**c, "status": {"descriptor": {"code": "CANCELLED"}}} for c in commitments]
+        commitments = [{**c, "status": {"descriptor": {"code": "CLOSED"}}} for c in commitments]
 
     payload = {
         "context": ctx,
@@ -464,7 +587,9 @@ async def cancel(req: TxnRequest):
             "contract": {
                 "id": contract.get("id", f"contract-{req.transaction_id[:8]}"),
                 "commitments": commitments,
-                "reason": {"descriptor": {"code": "BUYER_CANCEL", "name": "Cancelled by buyer"}},
+                # Contract.status is a Descriptor directly (no nested "descriptor" key),
+                # asymmetric to Commitment.status which is {descriptor: Descriptor}.
+                "status": {"code": "CANCELLED"},
             }
         },
     }

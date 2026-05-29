@@ -22,6 +22,27 @@ export interface DiscoveredAgent {
   modalities: string[];
   jurisdiction: string | null;
   provider: string;
+  // Composite ranking exposed by the CDS (mock-network/discover). Optional
+  // because older /discover responses won't have these fields yet — the
+  // frontend renders the breakdown only when present.
+  score?: number;
+  scoreComponents?: ScoreComponents;
+}
+
+export interface ScoreComponents {
+  semantic: number;
+  freshness: number;
+  health: number;
+  // The quality component lands once the rate-end-to-end PR is merged.
+  // Until then we treat it as optional.
+  quality?: number;
+  ratingCount?: number;
+  // BPP routing — populated from each catalog's ``provider`` block so the
+  // BAP knows which BPP to address on subsequent select/init/confirm.
+  // Without these the BAP falls back to its statically-configured
+  // default BPP and mis-routes any pick that is not the default.
+  bppId: string;
+  bppUri?: string;
 }
 
 export interface Skill {
@@ -176,24 +197,34 @@ export async function discover(prompt?: string): Promise<DiscoveredAgent[]> {
   const msg = cb.message as { catalogs?: CatalogRaw[] };
   if (!msg.catalogs?.length) return [];
 
-  // Flatten every catalog (one per BPP) into a single ranked list.
-  // Within a catalog the CDS already ordered by semantic similarity.
-  const all: DiscoveredAgent[] = [];
+  // Federated discover: the CDS returns one catalog per BPP that has a
+  // matching agent. We flatten resources across catalogs and tag each
+  // one with its source BPP so the buyer's subsequent select knows
+  // where to route. Previously this only read ``catalogs[0]`` which
+  // silently dropped every BPP other than the first — and after the
+  // composite-scoring change, "first" depends on max-score-per-BPP, so
+  // which BPP got dropped became request-dependent.
+  const out: DiscoveredAgent[] = [];
   for (const catalog of msg.catalogs) {
-    const providerName =
-      catalog.provider?.descriptor?.name ||
-      catalog.descriptor?.name ||
-      'Unknown Provider';
     const resources: ResourceRaw[] = (catalog.resources ?? []) as ResourceRaw[];
     const offers: OfferRaw[] = (catalog.offers ?? []) as OfferRaw[];
 
-    // resourceId → offerId, used when the buyer eventually selects.
     const offerMap = new Map<string, string>();
     for (const o of offers) {
       for (const rid of o.resourceIds ?? []) {
         offerMap.set(rid, o.id);
       }
     }
+
+    // bppId/bppUri come from the catalog-level provider block populated
+    // by mock-network/discover/service.py:assemble_catalogs. bppId is
+    // the subscriber id (e.g. "bpp-serg.example.com"); bppUri is the
+    // ONIX endpoint pulled from the Registry (network-local extension
+    // under provider.endpoints.beckn).
+    const provider = catalog.provider as CatalogProviderRaw | undefined;
+    const bppId = String(provider?.id ?? '');
+    const bppUri = (provider?.endpoints?.beckn ?? undefined) as string | undefined;
+    const providerName = provider?.descriptor?.name ?? '';
 
     for (const r of resources) {
       const ra = r.resourceAttributes ?? {};
@@ -202,7 +233,7 @@ export async function discover(prompt?: string): Promise<DiscoveredAgent[]> {
       const caps = (ra.capabilities ?? {}) as Record<string, unknown>;
       const skills: Skill[] = (ra.skills ?? []) as Skill[];
 
-      all.push({
+      out.push({
         id: r.id,
         offerId: offerMap.get(r.id) ?? `offer-${r.id}`,
         name: String(ra.label || r.descriptor?.name || `Agent ${r.id}`),
@@ -221,45 +252,45 @@ export async function discover(prompt?: string): Promise<DiscoveredAgent[]> {
         },
         modalities: (caps.modalities ?? ['text']) as string[],
         jurisdiction: ra.jurisdiction ? String(ra.jurisdiction) : null,
-        // Use the catalog's provider (canonical for the BPP) over any
-        // provider field nested inside agent_facts (often a self-reference).
-        provider: providerName,
+        // Fall back to AgentFacts ``provider.name`` if the catalog
+        // didn't include a provider name (e.g. dropped subscriber row).
+        provider:
+          providerName ||
+          String((ra.provider as Record<string, string>)?.name || 'Unknown Provider'),
+        bppId,
+        bppUri,
       });
     }
   }
-  return all;
-}
-
-// ── Index introspection ────────────────────────────────────
-
-/**
- * Quick stats from the CDS — total currently-published agents.
- * Used by the search page hero ("N agents available") so the UI does
- * not have to fire a discover just to know how many agents exist.
- */
-export async function getCdsStats(): Promise<{ totalAgents: number }> {
-  const CDS = (typeof window !== 'undefined'
-    ? 'http://localhost:8090'
-    : 'http://mock-network:8090');
-  try {
-    const res = await fetch(`${CDS}/cds/stats`);
-    if (!res.ok) return { totalAgents: 0 };
-    const data = await res.json();
-    return { totalAgents: Number(data?.index?.current_agents_total ?? 0) };
-  } catch {
-    return { totalAgents: 0 };
-  }
+  return out;
 }
 
 export async function selectAgent(
   agentId: string,
   offerId: string,
-  buyerName = 'Marketplace User',
+  options: {
+    buyerName?: string;
+    bppId?: string;
+    bppUri?: string;
+  } = {},
 ): Promise<SelectResult> {
+  const body: Record<string, unknown> = {
+    agent_id: agentId,
+    offer_id: offerId,
+    buyer_name: options.buyerName ?? 'Marketplace User',
+  };
+  // Forward BPP routing so the BAP addresses the right provider. Without
+  // these the BAP defaults to its statically-configured BPP_URI and
+  // mis-routes selects for any non-default BPP — silent failure mode
+  // because the on_select error envelope is not currently bubbled back
+  // to the BAP (parked bug #1).
+  if (options.bppId) body.bpp_id = options.bppId;
+  if (options.bppUri) body.bpp_uri = options.bppUri;
+
   const res = await fetch(`${API}/contracts/select`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ agent_id: agentId, offer_id: offerId, buyer_name: buyerName }),
+    body: JSON.stringify(body),
   });
   const { transactionId } = await res.json();
   const cb = await pollCallback(transactionId, 'on_select');
@@ -302,6 +333,49 @@ export async function pollStatus(txnId: string): Promise<ContractData> {
   return (cb.message as { contract?: ContractData }).contract ?? {};
 }
 
+/**
+ * Submit a buyer rating against a completed transaction.
+ *
+ * The BAP endpoint accepts a 1..5 score plus optional free-form
+ * feedback. Re-rating the same target on the same transaction
+ * overwrites (BAP-side upsert), so callers don't need to track
+ * "already rated" state defensively.
+ *
+ * Returns the on_rate confirmation envelope or throws if the BAP
+ * itself rejects the rating (e.g. unknown transaction → 404, score
+ * out of range → 422). ONIX-side NACKs return a 200 + NACK body —
+ * we surface that as an error so the UI can show a clear failure.
+ */
+export async function rateContract(
+  txnId: string,
+  score: number,
+  options: { feedback?: string; targetId?: string } = {},
+): Promise<{ ack: 'ACK' | 'NACK'; error?: { code: string; message: string } }> {
+  const body: Record<string, unknown> = {
+    transaction_id: txnId,
+    score,
+  };
+  if (options.feedback) body.feedback = options.feedback;
+  if (options.targetId) body.target_id = options.targetId;
+
+  const res = await fetch(`${API}/contracts/rate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`Rate failed (${res.status}): ${detail.slice(0, 240)}`);
+  }
+  const data = await res.json();
+  const ack = data?.onix_response?.message?.ack?.status as 'ACK' | 'NACK' | undefined;
+  const error = data?.onix_response?.error as { code: string; message: string } | undefined;
+  if (ack === 'NACK') {
+    throw new Error(`Network rejected the rating: ${error?.code || 'NACK'} — ${error?.message || ''}`);
+  }
+  return { ack: ack ?? 'ACK', error };
+}
+
 export { iconForAgent };
 
 // ── Raw types for parsing ──────────────────────────────────
@@ -311,10 +385,13 @@ interface CatalogRaw {
   resources?: ResourceRaw[];
   offers?: OfferRaw[];
   descriptor?: { name: string; shortDesc?: string };
-  provider?: {
-    id: string;
-    descriptor?: { name: string; shortDesc?: string };
-  };
+  provider?: CatalogProviderRaw;
+}
+
+interface CatalogProviderRaw {
+  id?: string;
+  descriptor?: { name?: string; shortDesc?: string };
+  endpoints?: { beckn?: string };
 }
 
 interface ResourceRaw {
@@ -329,6 +406,8 @@ interface ResourceRaw {
     capabilities?: Record<string, unknown>;
     jurisdiction?: string;
     provider?: { name: string; url?: string };
+    _marketplaceScore?: number;
+    _marketplaceScoreComponents?: Record<string, unknown>;
   };
 }
 

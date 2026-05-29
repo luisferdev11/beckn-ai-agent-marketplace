@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import type { DiscoveredAgent, ContractData } from '@/lib/beckn-api';
 import { selectAgent, initTransaction, confirmTransaction, iconForAgent } from '@/lib/beckn-api';
+import { ScoreBreakdown } from '@/app/_components/ScoreBreakdown';
 
 interface AgentModalProps {
   agent: DiscoveredAgent;
@@ -83,7 +84,10 @@ export function AgentModal({ agent, onClose }: AgentModalProps) {
     setStep('selecting');
     setError(null);
     try {
-      const result = await selectAgent(agent.id, agent.offerId);
+      const result = await selectAgent(agent.id, agent.offerId, {
+        bppId: agent.bppId,
+        bppUri: agent.bppUri,
+      });
       setTxnId(result.transactionId);
       setContract(result.contract);
       setStep('pricing');
@@ -230,6 +234,16 @@ export function AgentModal({ agent, onClose }: AgentModalProps) {
           {/* ── STEP: Details (initial) ── */}
           {step === 'details' && (
             <>
+              {/* Marketplace score breakdown — rendered only when CDS
+                  surfaces composite scoring (post-Pieza 2 / composite scoring PR). */}
+              {agent.score !== undefined && agent.scoreComponents && (
+                <ScoreBreakdown
+                  score={agent.score}
+                  components={agent.scoreComponents}
+                  variant="detailed"
+                />
+              )}
+
               <div style={{ paddingTop: 4, borderTop: '1px solid rgba(0,124,195,0.08)' }}>
                 <Label>About</Label>
                 <p style={{ fontSize: 13, color: 'var(--text-secondary)', fontFamily: 'var(--font-plex)', lineHeight: 1.7 }}>

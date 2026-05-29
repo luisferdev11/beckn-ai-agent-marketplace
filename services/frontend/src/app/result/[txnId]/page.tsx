@@ -4,6 +4,7 @@ import { useEffect, useState, use } from 'react';
 import Link from 'next/link';
 import { pollStatus, iconForAgent } from '@/lib/beckn-api';
 import type { PerformanceAttributes } from '@/lib/beckn-api';
+import { RateModal } from '@/app/_components/RateModal';
 
 interface ResultPageProps {
   params: Promise<{ txnId: string }>;
@@ -35,6 +36,8 @@ export default function ResultPage({ params }: ResultPageProps) {
   const [performance, setPerformance] = useState<PerformanceAttributes | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [completed, setCompleted] = useState(false);
+  const [rateOpen, setRateOpen] = useState(false);
+  const [lastRatingScore, setLastRatingScore] = useState<number | null>(null);
 
   // Load agent info from sessionStorage
   useEffect(() => {
@@ -345,6 +348,77 @@ export default function ResultPage({ params }: ResultPageProps) {
           </div>
         )}
 
+        {/* Rate CTA — only visible after a successful execution */}
+        {completed && !error && performance && (
+          <div
+            style={{
+              marginTop: 28,
+              background: 'white',
+              border: '1px solid rgba(0,124,195,0.1)',
+              borderTop: '3px solid #F5B400',
+              borderRadius: 18,
+              padding: '24px 28px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 16,
+              flexWrap: 'wrap',
+              boxShadow: '0 2px 12px rgba(0,124,195,0.06)',
+              animation: 'fadeInUp 0.4s ease-out both',
+            }}
+          >
+            <div style={{ flex: '1 1 280px', minWidth: 0 }}>
+              <div style={{
+                fontSize: 10, letterSpacing: '0.08em', fontFamily: 'var(--font-mono)',
+                color: 'var(--text-tertiary)', fontWeight: 700, marginBottom: 6,
+              }}>
+                {lastRatingScore !== null ? 'YOUR RATING' : 'POST-FULFILLMENT'}
+              </div>
+              <h3 style={{
+                fontSize: 16, fontWeight: 600,
+                color: 'var(--text-primary)',
+                fontFamily: 'var(--font-plex)',
+                marginBottom: 4,
+              }}>
+                {lastRatingScore !== null
+                  ? `You rated this agent ${lastRatingScore}.0 / 5`
+                  : 'Rate this agent'}
+              </h3>
+              <p style={{
+                fontSize: 13,
+                color: 'var(--text-secondary)',
+                fontFamily: 'var(--font-plex)',
+                lineHeight: 1.55,
+              }}>
+                {lastRatingScore !== null
+                  ? 'Your rating flows into the marketplace trust score and improves discover rankings for everyone.'
+                  : 'Your rating feeds into the agent’s composite trust score — it influences how high it ranks in future discover queries.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setRateOpen(true)}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 8,
+                padding: '11px 22px',
+                background: '#F5B400',
+                color: '#1A1A1A',
+                border: 'none',
+                borderRadius: 10,
+                fontFamily: 'var(--font-plex)',
+                fontSize: 14, fontWeight: 600,
+                cursor: 'pointer',
+                boxShadow: '0 2px 10px rgba(245,180,0,0.3)',
+                whiteSpace: 'nowrap',
+                flexShrink: 0,
+              }}
+            >
+              <span style={{ fontSize: 16 }}>★</span>
+              {lastRatingScore !== null ? 'Update rating' : 'Rate this agent'}
+            </button>
+          </div>
+        )}
+
         {/* Back CTA */}
         {completed && (
           <div style={{ marginTop: 40 }}>
@@ -363,6 +437,15 @@ export default function ResultPage({ params }: ResultPageProps) {
           </div>
         )}
       </main>
+
+      <RateModal
+        open={rateOpen}
+        txnId={txnId}
+        agentName={agentName}
+        agentId={agentInfo?.id}
+        onClose={() => setRateOpen(false)}
+        onSubmitted={(score) => setLastRatingScore(score)}
+      />
     </div>
   );
 }

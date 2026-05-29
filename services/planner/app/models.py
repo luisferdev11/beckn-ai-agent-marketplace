@@ -1,24 +1,31 @@
-"""Pydantic models for the planner input/output contract."""
-from __future__ import annotations
+"""
+Re-exports from beckn_models.planning for ergonomic imports inside the planner.
 
-from pydantic import BaseModel
+Tests and engine code use `from app.models import ...` so this module stays
+as a thin facade. The source of truth lives in libs/beckn_models/planning.py.
+"""
+from beckn_models.planning import (
+    AgentCandidate,
+    ComposeRequest,
+    ExtractSkillsRequest,
+    ExtractSkillsResponse,
+    Plan,
+    PlanEstimates,
+    PlanStep,
+    SkillRequest,
+    StepAlternative,
+    StepRecommendation,
+)
 
-
-class PlanRequest(BaseModel):
-    """What the user sends to the planner."""
-    prompt: str
-    input_format: str
-    output_format: str
-
-
-class PlanStep(BaseModel):
-    """A single step in the execution plan."""
-    step: int
-    skill_id: str
-    reason: str
-
-
-class Plan(BaseModel):
-    """The planner output: an ordered sequence of skills."""
-    steps: list[PlanStep]
-    summary: str
+__all__ = [
+    "AgentCandidate",
+    "ComposeRequest",
+    "ExtractSkillsRequest",
+    "ExtractSkillsResponse",
+    "Plan",
+    "PlanEstimates",
+    "PlanStep",
+    "SkillRequest",
+    "StepAlternative",
+    "StepRecommendation",
+]

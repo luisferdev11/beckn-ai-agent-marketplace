@@ -1,70 +1,38 @@
 {
-  "version": "1.0.0",
-  "description": "Static registry of known skill types available in the marketplace. Used by the planner to decompose user intents into executable steps.",
+  "version": "2.0.0",
+  "description": "Skill IDs available on the network. The planner picks skills FROM THIS LIST only — the IDs must match what BPPs publish in their AgentFacts.skills[].id (see infra/db/bpp/migrations/*.sql). Keep this file in sync with the catalog seed.",
   "skills": [
     {
-      "id": "summarize",
-      "description": "Condense long text or documents into a shorter version preserving key points"
-    },
-    {
-      "id": "translate",
-      "description": "Translate text from one language to another"
-    },
-    {
-      "id": "classify",
-      "description": "Categorize content into predefined or inferred labels"
-    },
-    {
-      "id": "extract_entities",
-      "description": "Identify and extract named entities like people, organizations, dates, amounts from text"
-    },
-    {
-      "id": "extract_structured_data",
-      "description": "Extract structured fields from unstructured documents like invoices, receipts, or forms"
-    },
-    {
-      "id": "sentiment_analysis",
-      "description": "Determine the emotional tone or opinion expressed in text"
-    },
-    {
-      "id": "code_review",
-      "description": "Analyze source code for bugs, quality issues, and improvement suggestions"
-    },
-    {
-      "id": "security_audit",
-      "description": "Detect security vulnerabilities and compliance issues in code or configurations"
-    },
-    {
-      "id": "generate_text",
-      "description": "Produce new text content from a prompt or instructions"
-    },
-    {
-      "id": "rewrite",
-      "description": "Rephrase or restructure existing text for clarity, tone, or audience"
-    },
-    {
-      "id": "ocr",
-      "description": "Extract text from images or scanned documents"
-    },
-    {
-      "id": "qa",
-      "description": "Answer questions based on a provided context or document"
+      "id": "document_summary",
+      "description": "Condense legal, regulatory, or long-form documents into a shorter version preserving key points"
     },
     {
       "id": "legal_analysis",
-      "description": "Analyze legal clauses, provisions, risks, and obligations in documents"
+      "description": "Analyze legal clauses, provisions, risks, and obligations in contracts and filings"
     },
     {
-      "id": "format_conversion",
-      "description": "Transform data from one structured format to another"
+      "id": "code_review",
+      "description": "Review source code for bugs, quality issues, and improvement suggestions"
     },
     {
-      "id": "compare",
-      "description": "Identify differences and similarities between two or more documents or datasets"
+      "id": "security_analysis",
+      "description": "Detect OWASP Top 10 vulnerabilities and security issues in code"
     },
     {
-      "id": "validate",
-      "description": "Check data or documents against rules, schemas, or standards for correctness"
+      "id": "best_practices",
+      "description": "Check adherence to coding standards and best practices"
+    },
+    {
+      "id": "data_extraction",
+      "description": "Extract structured fields from invoices, receipts, and financial documents"
+    },
+    {
+      "id": "ocr",
+      "description": "Extract text from images or scanned documents (OCR)"
+    },
+    {
+      "id": "invoice_processing",
+      "description": "Parse invoice line items, totals, taxes, and vendor details"
     }
   ]
 }
