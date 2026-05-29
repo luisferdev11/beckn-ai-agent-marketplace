@@ -116,12 +116,29 @@ async def assemble_catalogs(
         subscriber = await registry_repository.get_subscriber(bpp_id)
         if subscriber is None:
             provider_desc = {"name": bpp_id}
+            bpp_uri = None
         else:
             org = subscriber.get("organization") or {}
             provider_desc = {
                 "name": org.get("name") or bpp_id,
                 "shortDesc": org.get("shortDesc") or "",
             }
+            bpp_uri = subscriber.get("endpoint_url")
+
+        provider_block: dict = {
+            "id": bpp_id,
+            "descriptor": provider_desc,
+        }
+        # Expose the BPP's ONIX endpoint so BAPs can route subsequent
+        # actions (select / init / confirm / status / rate) back to the
+        # right BPP after a multi-provider discover. Without this the
+        # BAP would default to its statically-configured BPP_URI and
+        # mis-route any pick that is not the default provider.
+        # The field rides on the JSON-LD-flexible Organization block
+        # (Beckn v2 does not formalise `endpoints` here yet) and is
+        # documented as a network-local extension.
+        if bpp_uri:
+            provider_block["endpoints"] = {"beckn": bpp_uri}
 
         catalogs.append({
             "id": f"catalog-discover-{transaction_id[:8]}-{bpp_id}",
@@ -129,10 +146,7 @@ async def assemble_catalogs(
                 "name": f"{provider_desc['name']} — AI Agents",
                 "shortDesc": f"{len(rows)} matching agents",
             },
-            "provider": {
-                "id": bpp_id,
-                "descriptor": provider_desc,
-            },
+            "provider": provider_block,
             "resources": [_row_to_resource(r) for r in rows],
         })
     return catalogs
