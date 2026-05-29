@@ -39,12 +39,12 @@ class TestDiscoverPayloadSentToONIX:
         payload = json.loads(mock_onix["discover"].calls.last.request.content)
         assert payload["context"]["action"] == "discover"
 
-    async def test_payload_includes_query_in_message(self, client, mock_onix):
+    async def test_payload_includes_query_in_schema_context(self, client, mock_onix):
         await client.post("/api/contracts/discover", json={"query": "legal summarizer"})
         payload = json.loads(mock_onix["discover"].calls.last.request.content)
-        intent = payload["message"].get("intent", {})
-        query = str(intent).lower()
-        assert "legal summarizer" in query
+        schema_context = payload["context"].get("schemaContext", [])
+        assert "legal" in schema_context
+        assert "summarizer" in schema_context
 
     async def test_payload_includes_capability_filter(self, client, mock_onix):
         await client.post("/api/contracts/discover", json={

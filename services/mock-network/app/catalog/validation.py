@@ -24,10 +24,24 @@ from jsonschema import Draft202012Validator
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_SCHEMA_PATH = os.getenv(
-    "AGENTFACTS_SCHEMA_PATH",
-    "/app/schemas/agentfacts-v1.json",
-)
+def _resolve_schema_path() -> str:
+    """Resolve schema path that works in Docker (/app/) and locally."""
+    env = os.getenv("AGENTFACTS_SCHEMA_PATH")
+    if env:
+        return env
+    # In Docker the working dir is /app; locally we walk up from this file
+    # until we find schemas/agentfacts-v1.json.
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidate = here
+    for _ in range(10):
+        path = os.path.join(candidate, "schemas", "agentfacts-v1.json")
+        if os.path.isfile(path):
+            return path
+        candidate = os.path.dirname(candidate)
+    return "/app/schemas/agentfacts-v1.json"
+
+
+DEFAULT_SCHEMA_PATH = _resolve_schema_path()
 
 
 @dataclass(frozen=True)
