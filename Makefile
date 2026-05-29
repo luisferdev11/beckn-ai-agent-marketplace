@@ -8,9 +8,9 @@
 #   make test-cov      — run with coverage report
 #   make install-test  — install test dependencies for all services
 
-.PHONY: test test-bap test-bpp test-bpp-serg test-e2e test-cov install-test
+.PHONY: test test-bap test-bpp test-bpp-serg test-planner test-e2e test-cov install-test
 
-test: test-bap test-bpp test-bpp-serg
+test: test-bap test-bpp test-bpp-serg test-planner
 
 test-bap:
 	@echo "\n=== BAP Tests ===\n"
@@ -23,6 +23,10 @@ test-bpp:
 test-bpp-serg:
 	@echo "\n=== BPP-Serg Tests ===\n"
 	cd services/bpp-serg && python -m pytest tests/ -v --tb=short
+
+test-planner:
+	@echo "\n=== Planner Tests ===\n"
+	cd services/planner && python -m pytest tests/ -v --tb=short
 
 test-e2e:
 	@echo "\n=== E2E Tests (requires Docker) ===\n"
@@ -40,3 +44,4 @@ install-test:
 	cd services/bap && pip install -r requirements-test.txt
 	cd services/bpp && pip install -r requirements-test.txt
 	cd services/bpp-serg && pip install -r requirements-test.txt
+	cd services/planner && pip install -r requirements-test.txt

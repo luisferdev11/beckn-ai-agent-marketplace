@@ -32,11 +32,13 @@ def fake_db(monkeypatch):
     lookup happens at call time, so patching the module attributes works.
 
     Yields a handle with two collections so tests can inspect or seed state:
-        fake_db['contracts']  — dict[txn_id, contract_row]
-        fake_db['callbacks']  — list[callback_row]
+        fake_db['contracts']      — dict[txn_id, contract_row]
+        fake_db['callbacks']      — list[callback_row]
+        fake_db['ratings_sent']   — list[rating_row]
     """
     contracts: dict[str, dict] = {}
     callbacks: list[dict] = []
+    ratings_sent: list[dict] = []
 
     def _empty_contract(txn_id: str, contract_code: str) -> dict:
         return {
@@ -145,6 +147,29 @@ def fake_db(monkeypatch):
     async def _get_all_transactions():
         return list(contracts.values())
 
+    async def _record_rating_sent(*, transaction_id, target_id, target_type,
+                                  score, score_min, score_max, feedback, bpp_id):
+        # Upsert: replace existing row with the same (txn, target, type).
+        for row in ratings_sent:
+            if (row["transaction_id"] == transaction_id
+                    and row["target_id"] == target_id
+                    and row["target_type"] == target_type):
+                row.update({
+                    "score": score, "score_min": score_min, "score_max": score_max,
+                    "feedback": feedback, "bpp_id": bpp_id,
+                })
+                return row
+        new_row = {
+            "id": len(ratings_sent) + 1,
+            "transaction_id": transaction_id,
+            "target_id": target_id,
+            "target_type": target_type,
+            "score": score, "score_min": score_min, "score_max": score_max,
+            "feedback": feedback, "bpp_id": bpp_id,
+        }
+        ratings_sent.append(new_row)
+        return new_row
+
     from app.db import repository
     monkeypatch.setattr(repository, "create_draft_contract", _create_draft_contract)
     monkeypatch.setattr(repository, "contract_exists", _contract_exists)
@@ -155,20 +180,26 @@ def fake_db(monkeypatch):
     monkeypatch.setattr(repository, "get_last_callback", _get_last_callback)
     monkeypatch.setattr(repository, "get_callbacks_count", _get_callbacks_count)
     monkeypatch.setattr(repository, "get_all_transactions", _get_all_transactions)
+    monkeypatch.setattr(repository, "record_rating_sent", _record_rating_sent, raising=False)
 
     # Reset the in-memory transaction-target map between tests.
     from app import store as _store
     _store._transaction_targets.clear()
 
-    yield {"contracts": contracts, "callbacks": callbacks}
+    yield {
+        "contracts": contracts,
+        "callbacks": callbacks,
+        "ratings_sent": ratings_sent,
+    }
 
     contracts.clear()
     callbacks.clear()
+    ratings_sent.clear()
     _store._transaction_targets.clear()
 
 
 ONIX_BAP_BASE = "http://onix-bap:8081"
-_BECKN_ACTIONS = ("select", "init", "confirm", "status", "cancel", "discover", "track", "update", "rating", "support")
+_BECKN_ACTIONS = ("select", "init", "confirm", "status", "cancel", "discover", "track", "update", "rate", "rating", "support")
 
 
 @pytest.fixture

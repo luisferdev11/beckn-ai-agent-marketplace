@@ -16,6 +16,11 @@ BPP_CALLBACK_URL = os.getenv("BPP_CALLBACK_URL", "http://onix-bpp:8082/bpp/calle
 # URL of the orchestrator service — where we delegate agent execution
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:3003")
 
+# URL of the marketplace CDS — where we POST rating ingest events so the
+# discover quality component reflects new ratings without us writing
+# directly to the CDS database (deliberate separation of concerns).
+CDS_BASE_URL = os.getenv("CDS_BASE_URL", "http://mock-network:8090")
+
 # Beckn identity (matches ONIX config and DeDi registry)
 BPP_ID = os.getenv("BPP_ID", "bpp.example.com")
 BPP_URI = os.getenv("BPP_URI", "http://onix-bpp:8082/bpp/receiver")

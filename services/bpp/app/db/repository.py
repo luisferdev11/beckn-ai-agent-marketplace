@@ -260,3 +260,68 @@ async def list_contracts():
     pool = await get_pool()
     rows = await pool.fetch("SELECT * FROM contracts ORDER BY created_at DESC LIMIT 100")
     return [dict(r) for r in rows]
+
+
+# ─── Ratings (received from buyers) ──────────────────────────
+
+async def record_rating_received(
+    *,
+    transaction_id: str,
+    contract_code: str | None,
+    target_id: str,
+    target_type: str,
+    score: float,
+    score_min: float,
+    score_max: float,
+    feedback: str | None,
+    bap_id: str | None,
+) -> dict:
+    """Upsert a rating received from a BAP into ``ratings_received``.
+
+    Re-rating the same (transaction, target, type) overwrites; uses the
+    unique index ``uq_ratings_received_txn_target`` defined in migration
+    003_ratings.sql.
+    """
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        """
+        INSERT INTO ratings_received (transaction_id, contract_code, target_id,
+                                      target_type, score, score_min, score_max,
+                                      feedback, bap_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ON CONFLICT (transaction_id, target_id, target_type) DO UPDATE
+        SET score = EXCLUDED.score,
+            score_min = EXCLUDED.score_min,
+            score_max = EXCLUDED.score_max,
+            feedback = EXCLUDED.feedback,
+            bap_id = EXCLUDED.bap_id,
+            received_at = NOW()
+        RETURNING id, transaction_id, target_id, target_type, score,
+                  score_min, score_max, feedback, bap_id, received_at
+        """,
+        transaction_id, contract_code, target_id, target_type,
+        score, score_min, score_max, feedback, bap_id,
+    )
+    return dict(row) if row else {}
+
+
+async def get_agent_rating_aggregate(beckn_id: str) -> dict:
+    """Read the per-agent rolling aggregate from the v_agent_ratings view.
+
+    Returns ``{agent_beckn_id, rating_count, avg_score}`` — when no
+    ratings have been recorded yet, ``rating_count`` is 0 and
+    ``avg_score`` is 0 (the agent contributes neutrally to discover
+    scoring; that interpretation lives in the scoring module).
+    """
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        """
+        SELECT agent_beckn_id, rating_count, avg_score
+        FROM v_agent_ratings
+        WHERE agent_beckn_id = $1
+        """,
+        beckn_id,
+    )
+    if not row:
+        return {"agent_beckn_id": beckn_id, "rating_count": 0, "avg_score": 0}
+    return dict(row)

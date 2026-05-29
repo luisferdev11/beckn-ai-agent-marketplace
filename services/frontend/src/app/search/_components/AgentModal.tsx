@@ -84,7 +84,10 @@ export function AgentModal({ agent, onClose }: AgentModalProps) {
     setStep('selecting');
     setError(null);
     try {
-      const result = await selectAgent(agent.id, agent.offerId);
+      const result = await selectAgent(agent.id, agent.offerId, {
+        bppId: agent.bppId,
+        bppUri: agent.bppUri,
+      });
       setTxnId(result.transactionId);
       setContract(result.contract);
       setStep('pricing');

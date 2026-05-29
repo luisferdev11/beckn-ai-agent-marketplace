@@ -18,14 +18,29 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
+import httpx
+
 from app.catalog_data import get_agent_by_id, get_offer_by_id, PROVIDER
-from app.config import AGENT_URL_MAP, BPP_ID, BPP_URI
+from app.config import AGENT_URL_MAP, BPP_ID, BPP_URI, CDS_BASE_URL
 from app.handlers import orchestrator_client
+
+CDS_INGEST_TIMEOUT_SECONDS = 3.0
 
 logger = logging.getLogger(__name__)
 
 # In-memory contract store (Iter 0 — will migrate to SQLite/Postgres)
 _contracts: dict[str, dict] = {}
+
+# In-memory ratings store. Same iteration debt as `_contracts`: Serg's
+# postgres migration is tracked as separate follow-up. Keyed by
+# (transaction_id, target_id, target_type) to enforce upsert semantics
+# without a unique index.
+_ratings_received: list[dict] = []
+
+# Beckn v2 RatingInput range invariants — see services/bpp/app/handlers
+# for the canonical implementation.
+RATING_MIN_DEFAULT = 1.0
+RATING_MAX_DEFAULT = 5.0
 
 
 def _now_iso() -> str:
@@ -375,12 +390,144 @@ async def handle_cancel(context: dict, message: dict) -> dict:
 
 
 async def handle_rating(context: dict, message: dict) -> dict:
-    """Handle rating: BAP rates the agent."""
+    """Legacy v1 rating echo handler. Real ingestion lives in handle_rate."""
     ratings = message.get("ratings", [])
-    logger.info(f"rating received: {ratings}")
+    logger.info(f"rating (v1) received: {ratings}")
     return {
         "context": build_response_context(context, "rating"),
         "message": {"ratings": ratings},
+    }
+
+
+def _coerce_rating_input(rinput: dict) -> dict | None:
+    """Same shape as services/bpp/app/handlers/beckn_actions.py — kept
+    duplicated by design (Serg is an independent deployable that may
+    evolve its rating rules separately)."""
+    target = (rinput or {}).get("target") or {}
+    target_id = target.get("id")
+    if not target_id:
+        return None
+    rng = (rinput or {}).get("range") or {}
+    if "value" not in rng:
+        return None
+    score = float(rng.get("value"))
+    score_min = float(rng.get("min", RATING_MIN_DEFAULT))
+    score_max = float(rng.get("max", RATING_MAX_DEFAULT))
+    if score_min >= score_max:
+        return None
+    if not (score_min <= score <= score_max):
+        return None
+    feedback = None
+    submission = rinput.get("feedbackFormSubmission") or {}
+    feedback = (submission.get("data") or {}).get("review")
+    target_type = (target.get("descriptor") or {}).get("code") or "agent"
+    return {
+        "target_id": target_id,
+        "target_type": target_type,
+        "score": score,
+        "score_min": score_min,
+        "score_max": score_max,
+        "feedback": feedback,
+    }
+
+
+def _upsert_rating(*, transaction_id, contract_id, bap_id, coerced):
+    for row in _ratings_received:
+        if (row["transaction_id"] == transaction_id
+                and row["target_id"] == coerced["target_id"]
+                and row["target_type"] == coerced["target_type"]):
+            row.update({
+                "score": coerced["score"],
+                "score_min": coerced["score_min"],
+                "score_max": coerced["score_max"],
+                "feedback": coerced["feedback"],
+                "bap_id": bap_id,
+            })
+            return row
+    new_row = {
+        "transaction_id": transaction_id,
+        "contract_code": contract_id,
+        "target_id": coerced["target_id"],
+        "target_type": coerced["target_type"],
+        "score": coerced["score"],
+        "score_min": coerced["score_min"],
+        "score_max": coerced["score_max"],
+        "feedback": coerced["feedback"],
+        "bap_id": bap_id,
+        "received_at": _now_iso(),
+    }
+    _ratings_received.append(new_row)
+    return new_row
+
+
+async def _push_rating_to_cds(*, agent_beckn_id, score, score_min, score_max):
+    """Best-effort POST to the marketplace CDS ratings ingest. Errors
+    are logged and swallowed — the local rating is already persisted."""
+    url = f"{CDS_BASE_URL.rstrip('/')}/cds/ratings/ingest"
+    body = {
+        "bppSubscriberId": BPP_ID,
+        "agentBecknId":    agent_beckn_id,
+        "score":           float(score),
+        "scoreMin":        float(score_min),
+        "scoreMax":        float(score_max),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=CDS_INGEST_TIMEOUT_SECONDS) as client:
+            resp = await client.post(url, json=body)
+            logger.info(
+                "cds rating ingest %s → HTTP %s", agent_beckn_id, resp.status_code
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("cds rating ingest failed for %s: %s", agent_beckn_id, exc)
+
+
+async def handle_rate(context: dict, message: dict) -> dict:
+    """Persist incoming RatingInputs (in-memory) and ack with on_rate.
+
+    Orphan-txn rejection mirrors Tecla — Serg's contract store is the
+    in-memory ``_contracts`` map; a rate without a prior select on this
+    BPP gets silently dropped (no row written).
+    """
+    txn_id = context.get("transactionId", "unknown")
+    stored = None
+    for c in _contracts.values():
+        if c.get("transaction_id") == txn_id:
+            stored = c
+            break
+    if stored is None:
+        logger.warning(f"rate: txn unknown to Serg, rejecting [txn={txn_id[:8]}]")
+        return {
+            "context": build_response_context(context, "rate"),
+            "message": {"ratingInputs": []},
+        }
+
+    bap_id = context.get("bapId")
+    contract_id = stored.get("id")
+
+    accepted: list[dict] = []
+    for rinput in message.get("ratingInputs") or []:
+        coerced = _coerce_rating_input(rinput)
+        if coerced is None:
+            continue
+        _upsert_rating(
+            transaction_id=txn_id,
+            contract_id=contract_id,
+            bap_id=bap_id,
+            coerced=coerced,
+        )
+        accepted.append(rinput)
+        if coerced["target_type"] == "agent":
+            asyncio.create_task(_push_rating_to_cds(
+                agent_beckn_id=coerced["target_id"],
+                score=coerced["score"],
+                score_min=coerced["score_min"],
+                score_max=coerced["score_max"],
+            ))
+
+    logger.info(f"rate: {len(accepted)} accepted [txn={txn_id[:8]}]")
+    return {
+        "context": build_response_context(context, "rate"),
+        "message": {"ratingInputs": accepted},
     }
 
 
@@ -407,6 +554,7 @@ ACTION_HANDLERS = {
     "confirm": handle_confirm,
     "status": handle_status,
     "cancel": handle_cancel,
+    "rate": handle_rate,
     "rating": handle_rating,
     "support": handle_support,
 }

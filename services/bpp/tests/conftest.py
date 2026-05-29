@@ -69,6 +69,7 @@ def fake_db(monkeypatch):
         "agent-code-reviewer-001": _seed_agent(2, "agent-code-reviewer-001", "Code Reviewer", 10.0),
         "agent-data-extractor-001": _seed_agent(3, "agent-data-extractor-001", "Data Extractor", 4.0),
     }
+    ratings_received: list[dict] = []
 
     async def _search_agents(keywords):
         results = []
@@ -130,6 +131,44 @@ def fake_db(monkeypatch):
         contracts[transaction_id].update(kwargs)
         return contracts[transaction_id]
 
+    async def _record_rating_received(*, transaction_id, contract_code, target_id,
+                                      target_type, score, score_min, score_max,
+                                      feedback, bap_id):
+        for row in ratings_received:
+            if (row["transaction_id"] == transaction_id
+                    and row["target_id"] == target_id
+                    and row["target_type"] == target_type):
+                row.update({
+                    "score": score, "score_min": score_min, "score_max": score_max,
+                    "feedback": feedback, "bap_id": bap_id,
+                })
+                return row
+        new_row = {
+            "id": len(ratings_received) + 1,
+            "transaction_id": transaction_id,
+            "contract_code": contract_code,
+            "target_id": target_id,
+            "target_type": target_type,
+            "score": score, "score_min": score_min, "score_max": score_max,
+            "feedback": feedback, "bap_id": bap_id,
+        }
+        ratings_received.append(new_row)
+        return new_row
+
+    async def _get_agent_rating_aggregate(beckn_id):
+        rows = [
+            r for r in ratings_received
+            if r["target_id"] == beckn_id and r["target_type"] == "agent"
+        ]
+        if not rows:
+            return {"agent_beckn_id": beckn_id, "rating_count": 0, "avg_score": 0}
+        scores = [float(r["score"]) for r in rows]
+        return {
+            "agent_beckn_id": beckn_id,
+            "rating_count": len(scores),
+            "avg_score": round(sum(scores) / len(scores), 3),
+        }
+
     from app.db import repository
     monkeypatch.setattr(repository, "search_agents", _search_agents)
     monkeypatch.setattr(repository, "list_agents", _list_agents)
@@ -137,10 +176,19 @@ def fake_db(monkeypatch):
     monkeypatch.setattr(repository, "create_contract", _create_contract)
     monkeypatch.setattr(repository, "get_contract_by_txn", _get_contract_by_txn)
     monkeypatch.setattr(repository, "update_contract", _update_contract)
+    monkeypatch.setattr(repository, "record_rating_received", _record_rating_received,
+                        raising=False)
+    monkeypatch.setattr(repository, "get_agent_rating_aggregate",
+                        _get_agent_rating_aggregate, raising=False)
 
-    yield {"contracts": contracts, "agents": agents}
+    yield {
+        "contracts": contracts,
+        "agents": agents,
+        "ratings_received": ratings_received,
+    }
 
     contracts.clear()
+    ratings_received.clear()
 
 
 @pytest.fixture

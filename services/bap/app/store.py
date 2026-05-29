@@ -60,6 +60,29 @@ async def get_all_transactions() -> list[dict]:
     return await db.get_all_transactions()
 
 
+async def record_rating_sent(
+    *,
+    transaction_id: str,
+    target_id: str,
+    target_type: str,
+    score: float,
+    score_min: float,
+    score_max: float,
+    feedback: str | None,
+    bpp_id: str | None,
+) -> dict:
+    return await db.record_rating_sent(
+        transaction_id=transaction_id,
+        target_id=target_id,
+        target_type=target_type,
+        score=score,
+        score_min=score_min,
+        score_max=score_max,
+        feedback=feedback,
+        bpp_id=bpp_id,
+    )
+
+
 # ── In-memory transaction target tracking (BPP routing) ─────────────────────
 
 _transaction_targets: dict[str, dict[str, str]] = {}
