@@ -10,6 +10,11 @@ from ai_agents.code_review import (
     get_metrics as get_code_review_metrics,
     run_task as run_code_review,
 )
+from ai_agents.summarization import (
+    check_model as check_summarization,
+    get_metrics as get_summarization_metrics,
+    run_task as run_summarization,
+)
 from ai_agents.text_generation import (
     run_task as run_text_generation,
 )
@@ -48,7 +53,12 @@ class TaskResponse(BaseModel):
 
 _HANDLERS = {
     "agent-code-reviewer-001": run_code_review,
-    "agent-summarizer-001": run_code_review,
+    # agent-summarizer-001 is the Tecla side of the Story 1 demo
+    # (cross-BPP pipeline with Serg extractor-v1). Was previously
+    # mis-routed to run_code_review — fixed so the published
+    # outputSchema {summary, key_points, language} actually matches
+    # the runtime output.
+    "agent-summarizer-001": run_summarization,
     "agent-data-extractor-001": run_code_review,
     "text-generator": run_text_generation,
 }
@@ -79,15 +89,24 @@ async def execute_task(body: dict, agent_id: str = ""):
 
 @app.get("/health")
 async def health():
+    # Both handlers hit the same Groq backend; check one and assume the
+    # other follows. A single failed ping flips the whole service to
+    # ``degraded`` which is what we want for the registry liveness probe.
     model_ok = await check_code_review()
     return {
         "status": "ok" if model_ok else "degraded",
         "service": os.getenv("SERVICE_NAME", "agents"),
         "uptime_seconds": int(time.time() - START_TIME),
-        "agents": {"code_review": {"model_reachable": model_ok}},
+        "agents": {
+            "code_review": {"model_reachable": model_ok},
+            "summarization": {"model_reachable": model_ok},
+        },
     }
 
 
 @app.get("/metrics")
 async def metrics():
-    return {"code_review": get_code_review_metrics()}
+    return {
+        "code_review": get_code_review_metrics(),
+        "summarization": get_summarization_metrics(),
+    }
