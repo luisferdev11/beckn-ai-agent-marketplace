@@ -126,7 +126,7 @@ def fake_subscribers(monkeypatch):
             "public_key": data.get("public_key"),
             "organization": data.get("organization") or {},
             "jurisdiction": data.get("jurisdiction"),
-            "status": "active",
+            "status": data.get("status") or "active",
             "health": "unknown",
             "last_seen_at": None,
             "consecutive_failures": 0,

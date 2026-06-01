@@ -61,6 +61,18 @@ def valid_agent_facts(**overrides) -> dict:
             "currency": "INR",
             "value": 6.0,
         },
+        # Rigorous input/output schema contracts (Epic D). A "valid" agent
+        # in a marketplace that requires schemas must declare both.
+        "inputSchema": {
+            "type": "object",
+            "properties": {"text": {"type": "string"}},
+            "required": ["text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {"summary": {"type": "string"}},
+            "required": ["summary"],
+        },
     }
     base.update(overrides)
     return base
@@ -70,6 +82,15 @@ def agent_facts_missing(field: str) -> dict:
     """An AgentFacts payload with the named required field removed."""
     af = valid_agent_facts()
     af.pop(field, None)
+    return af
+
+
+def agent_facts_without_schemas() -> dict:
+    """A structurally-valid AgentFacts payload lacking the input/output
+    schema contracts — rejected under strict mode (Epic D)."""
+    af = valid_agent_facts()
+    af.pop("inputSchema", None)
+    af.pop("outputSchema", None)
     return af
 
 

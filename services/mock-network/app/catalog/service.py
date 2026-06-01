@@ -27,8 +27,14 @@ from typing import Optional
 
 import httpx
 
+from app import config
 from app.catalog import repository
-from app.catalog.validation import AgentFactsValidator, ItemError, get_default_validator
+from app.catalog.validation import (
+    AgentFactsValidator,
+    ItemError,
+    get_default_validator,
+    missing_schema_contracts,
+)
 from app.embeddings.service import EmbeddingService, embed_agent, get_default_service
 from app.registry import repository as registry_repository
 
@@ -123,6 +129,8 @@ async def _process_one_catalog(
     accepted: list[str] = []
     rejected: list[ItemError] = []
 
+    strict = config.strict_schemas()
+
     for res in resources:
         resource_id = res.get("id") or ""
         agent_facts = res.get("resourceAttributes") or {}
@@ -136,9 +144,35 @@ async def _process_one_catalog(
             )
             continue
 
+        # Schema-contract gate (Epic D). In strict mode an agent missing
+        # either rigorous input/output schema is rejected; in permissive
+        # mode it is indexed but flagged ``pipeline_eligible=false`` so the
+        # probe/orchestrator know not to route real work to it.
+        missing = missing_schema_contracts(agent_facts)
+        if missing and strict:
+            rejected.append(ItemError(
+                resource_id=resource_id,
+                code="MISSING_SCHEMA_CONTRACT",
+                message=("missing required schema contract(s): "
+                         f"{', '.join(missing)} — declare a non-empty JSON Schema "
+                         "for each (strict mode; set STRICT_SCHEMAS=false to relax)"),
+                path="$." + missing[0],
+            ))
+            logger.info(
+                "catalog/publish: rejecting %s — missing schema contracts %s",
+                resource_id, missing,
+            )
+            continue
+
+        # Inject pipeline_eligible AFTER AgentFacts validation: the schema
+        # has additionalProperties:false, so an extra key would fail the
+        # validator. discover returns agent_facts verbatim, surfacing the
+        # flag to the frontend.
+        indexed_facts = {**agent_facts, "pipeline_eligible": not missing}
+
         try:
             await _index_one_resource(
-                agent_facts=agent_facts,
+                agent_facts=indexed_facts,
                 resource_id=resource_id,
                 bpp_subscriber_id=bpp_subscriber_id,
                 embedder=embedder,

@@ -13,8 +13,16 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 SubscriberRole = Literal["BAP", "BPP", "CDS", "DS"]
-SubscriberStatus = Literal["pending_kyc", "active", "suspended", "deprecated"]
-SubscriberHealth = Literal["unknown", "healthy", "degraded", "down"]
+# Kept in sync with the DB CHECK in migration 005. The admission lifecycle
+# added pending_admission / failing_conformance / rejected; omitting them
+# here makes GET/LIST 500 on rows carrying those statuses.
+SubscriberStatus = Literal[
+    "pending_admission", "pending_kyc", "failing_conformance",
+    "active", "suspended", "deprecated", "rejected",
+]
+# 'unhealthy' is the auto-suspend signal added in migration 005 (Phase 5);
+# the liveness probe still writes 'down' today, both are valid.
+SubscriberHealth = Literal["unknown", "healthy", "degraded", "down", "unhealthy"]
 
 
 class SubscriberCreate(BaseModel):

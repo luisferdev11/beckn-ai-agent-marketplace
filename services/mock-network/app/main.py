@@ -18,12 +18,15 @@ from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.admission.routes import router as admission_router
 from app.catalog.routes import operator_router as cds_operator_router
 from app.catalog.routes import router as catalog_router
 from app.config import SERVICE_NAME
 from app.db.pool import close_pool, get_pool
 from app.dedi.routes import router as dedi_router
 from app.discover.routes import router as discover_router
+from app.probe import runner as probe_runner
+from app.probe.routes import router as probe_router
 from app.ratings.routes import router as ratings_router
 from app.registry import liveness
 from app.registry.routes import router as registry_router
@@ -34,6 +37,9 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(SERVICE_NAME)
+
+# How often the dry-run probe sweep promotes probation agents.
+PROBE_SWEEP_INTERVAL_SECONDS = 120
 
 
 @asynccontextmanager
@@ -48,10 +54,20 @@ async def lifespan(_: FastAPI):
         max_instances=1,
         coalesce=True,
     )
+    # Agent probe sweep (dry-run): promote probation agents whose input
+    # contract is declared + satisfiable. Cheap, token-free; the full
+    # Beckn-flow probe is on-demand via POST /api/probes/.../retry.
+    scheduler.add_job(
+        probe_runner.probe_all_probation,
+        trigger=IntervalTrigger(seconds=PROBE_SWEEP_INTERVAL_SECONDS),
+        id="probe.probe_all_probation",
+        max_instances=1,
+        coalesce=True,
+    )
     scheduler.start()
     logger.info(
-        "%s started — DeDi + Registry + Catalog + Discover; liveness probe every %ss",
-        SERVICE_NAME, liveness.PROBE_INTERVAL_SECONDS,
+        "%s started — DeDi + Registry + Catalog + Discover; liveness %ss, probe sweep %ss",
+        SERVICE_NAME, liveness.PROBE_INTERVAL_SECONDS, PROBE_SWEEP_INTERVAL_SECONDS,
     )
     try:
         yield
@@ -92,7 +108,9 @@ async def health():
 
 app.include_router(dedi_router)
 app.include_router(registry_router)
+app.include_router(admission_router)
 app.include_router(catalog_router)
 app.include_router(discover_router)
 app.include_router(cds_operator_router)
 app.include_router(ratings_router)
+app.include_router(probe_router)

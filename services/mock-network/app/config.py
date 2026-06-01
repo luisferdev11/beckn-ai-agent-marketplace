@@ -14,6 +14,22 @@ SERVICE_NAME = os.getenv("SERVICE_NAME", "mock-network")
 PORT = int(os.getenv("PORT", "8090"))
 
 
+def strict_schemas() -> bool:
+    """Whether catalog/publish requires rigorous input/output JSON Schema
+    contracts per agent (Epic D).
+
+    Default ON: an agent without both contracts cannot be probed or run
+    through the orchestrator pipeline, so we reject it at publish time.
+    Set ``STRICT_SCHEMAS=false`` to fall back to permissive mode, where
+    such agents are still indexed but flagged ``pipeline_eligible=false``.
+
+    Read at call time (not import) so tests can flip it per-case.
+    """
+    return os.getenv("STRICT_SCHEMAS", "true").strip().lower() not in (
+        "false", "0", "no", "off",
+    )
+
+
 @dataclass(frozen=True)
 class DatabaseConfig:
     host: str

@@ -53,6 +53,26 @@ class ItemError:
     path: str  # JSONPath into resourceAttributes, for debuggability
 
 
+# Fields that carry the rigorous input/output JSON Schema contracts an
+# agent must declare to be eligible for the orchestrator pipeline (Epic D).
+SCHEMA_CONTRACT_FIELDS = ("inputSchema", "outputSchema")
+
+
+def missing_schema_contracts(agent_facts: dict) -> list[str]:
+    """Return the names of any required schema contracts that are absent or
+    empty. A contract must be a non-empty JSON-Schema object; ``{}`` counts
+    as missing because an empty schema constrains nothing and is useless to
+    the probe/orchestrator."""
+    if not isinstance(agent_facts, dict):
+        return list(SCHEMA_CONTRACT_FIELDS)
+    missing: list[str] = []
+    for field in SCHEMA_CONTRACT_FIELDS:
+        value = agent_facts.get(field)
+        if not isinstance(value, dict) or not value:
+            missing.append(field)
+    return missing
+
+
 class AgentFactsValidator:
     """Wraps a jsonschema Draft202012Validator preloaded from disk.
 

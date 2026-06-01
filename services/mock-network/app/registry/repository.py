@@ -47,15 +47,21 @@ def _row_to_dict(row) -> dict:
 
 async def create_subscriber(data: dict) -> dict:
     """Insert a new subscriber. Raises ``asyncpg.UniqueViolationError`` on
-    duplicate ``subscriber_id``; the route layer maps that to HTTP 409."""
+    duplicate ``subscriber_id``; the route layer maps that to HTTP 409.
+
+    ``status`` is optional: when omitted the DB default ('active') applies,
+    preserving the legacy "no KYC flow" behaviour for direct registry
+    creates. The admission queue passes ``status='pending_admission'`` so a
+    self-registering BPP is parked until an admin approves it.
+    """
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             f"""
             INSERT INTO subscribers
                 (subscriber_id, role, endpoint_url, backend_health_url,
-                 public_key, organization, jurisdiction)
-            VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+                 public_key, organization, jurisdiction, status)
+            VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, COALESCE($8, 'active'))
             RETURNING {_COLUMNS}
             """,
             data["subscriber_id"],
@@ -65,6 +71,7 @@ async def create_subscriber(data: dict) -> dict:
             data.get("public_key"),
             json.dumps(data.get("organization") or {}),
             data.get("jurisdiction"),
+            data.get("status"),
         )
     return _row_to_dict(row)
 
