@@ -506,6 +506,40 @@ services:
     networks:
       - beckn_network
 
+  # CATALOG PUBLISHER — one-shot init job (no es un servicio persistente).
+  # En cuanto los BPPs y el CDS estan healthy, publica los catalogos de ambos
+  # proveedores al CDS (mock-network) para que `discover` devuelva resultados
+  # sin tener que correr `POST /api/publish` a mano. El indice del CDS es
+  # volatil (se pierde al reiniciar), por eso esto corre en cada `compose up`.
+  # Reintenta porque ONIX-BPP puede tardar un instante mas en estar listo.
+  catalog-publisher:
+    image: curlimages/curl:8.11.1
+    restart: "no"
+    depends_on:
+      bpp-provider:
+        condition: service_healthy
+      bpp-serg:
+        condition: service_healthy
+      mock-network:
+        condition: service_healthy
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        publish() {
+          name=$$1; url=$$2;
+          for i in $$(seq 1 10); do
+            if curl -fsS -X POST "$$url" -H "Content-Type: application/json" -d '{}'; then
+              echo " -> $$name catalog published"; return 0;
+            fi;
+            echo "... $$name publish attempt $$i failed, retrying in 3s"; sleep 3;
+          done;
+          echo " !! $$name publish failed after retries"; return 1;
+        };
+        publish "bpp-provider" "http://bpp-provider:3002/api/publish" &&
+        publish "bpp-serg"     "http://bpp-serg:3005/api/publish"
+    networks:
+      - beckn_network
+
 volumes:
   pgdata-bap:
   pgdata-bpp:

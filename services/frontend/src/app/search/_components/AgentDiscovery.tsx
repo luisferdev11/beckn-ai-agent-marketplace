@@ -1,12 +1,13 @@
 'use client';
 
 import { useState, useMemo, useRef, useEffect } from 'react';
+import type { ReactNode } from 'react';
 import { discover, plan as planWorkflow } from '@/lib/beckn-api';
 import type { DiscoveredAgent, Plan, PlanStep } from '@/lib/beckn-api';
-import { AgentCard } from './_components/AgentCard';
-import { FilterPanel } from './_components/FilterPanel';
-import type { FilterState } from './_components/FilterPanel';
-import { AgentModal } from './_components/AgentModal';
+import { AgentCard } from './AgentCard';
+import { FilterPanel } from './FilterPanel';
+import type { FilterState } from './FilterPanel';
+import { AgentModal } from './AgentModal';
 
 type Mode = 'browse' | 'planner';
 
@@ -88,7 +89,14 @@ function languagesOf(agent: DiscoveredAgent): string[] {
   return Array.from(codes).map(c => LANGUAGE_BY_CODE[c] ?? c);
 }
 
-export default function SearchPage() {
+/**
+ * Full agent-discovery experience: Browse/Planner toggle, filters, discover
+ * results and the workflow planner. The page-level top bar is injected via
+ * `header` so the same discovery surface can sit behind the public `/search`
+ * chrome or the authenticated consumer-dashboard chrome without duplicating
+ * the search logic (which is exactly how the two drifted apart before).
+ */
+export function AgentDiscovery({ header }: { header?: ReactNode }) {
   const [mode, setMode] = useState<Mode>('browse');
   const [query, setQuery] = useState('');
   const [hasSearched, setHasSearched] = useState(false);
@@ -98,7 +106,6 @@ export default function SearchPage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<DiscoveredAgent | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [totalIndexed, setTotalIndexed] = useState<number | null>(null);
   const [planResult, setPlanResult] = useState<Plan | null>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -194,45 +201,8 @@ export default function SearchPage() {
           display: 'flex', flexDirection: 'column', position: 'relative',
         }}
       >
-        {/* Top bar */}
-        <header style={{
-          position: 'relative', zIndex: 10,
-          borderBottom: '1px solid rgba(255,255,255,0.08)',
-          background: 'rgba(0,24,53,0.5)',
-          backdropFilter: 'blur(12px)',
-          WebkitBackdropFilter: 'blur(12px)',
-        }}>
-          <div style={{
-            maxWidth: 1200, margin: '0 auto', padding: '0 32px',
-            height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: 0,
-                fontFamily: 'var(--font-plex)', fontWeight: 700,
-                fontSize: 20, letterSpacing: '-0.01em', color: '#FFFFFF',
-              }}>
-                <span style={{ color: '#007CC3' }}>Infosys</span>
-                <span style={{ color: 'rgba(255,255,255,0.35)', margin: '0 10px', fontWeight: 300 }}>|</span>
-                <span style={{ fontSize: 15, fontWeight: 500, color: 'rgba(255,255,255,0.85)', letterSpacing: '0' }}>
-                  AI Agent Marketplace
-                </span>
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <div style={{
-                  width: 6, height: 6, borderRadius: '50%', background: '#00C572',
-                  animation: 'pulse 2.5s ease-in-out infinite',
-                }} />
-                <span style={{ fontSize: 12, color: 'var(--text-on-dark-3)', fontFamily: 'var(--font-mono)', letterSpacing: '0.04em' }}>
-                  BECKN v2.0 · TESTNET
-                </span>
-              </div>
-            </div>
-          </div>
-        </header>
+        {/* Top bar — injected by the host page (public or authenticated chrome) */}
+        {header}
 
         {/* Hero content — only mounted before search. New-search restores it. */}
         {!hasSearched && (
