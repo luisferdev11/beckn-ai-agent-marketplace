@@ -19,10 +19,11 @@ Pipeline:
             Computed inline in SQL using the constants from
             ``app.discover.scoring`` so the formula has a single source of
             truth. The JOIN against ``subscribers`` brings in the
-            Registry health signal. ``LEFT JOIN`` is intentional: an
-            agent indexed for a deprecated BPP still surfaces — its
-            ``bpp_health`` falls back to ``unknown`` and gets the
-            neutral 0.5 contribution.
+            Registry health signal AND enforces the lifecycle gate: only
+            agents with ``probe_status='live'`` whose BPP is ``active``
+            are returned (Epic E5/E6). The ``LEFT JOIN`` is kept so the
+            COALESCE in the WHERE can explicitly exclude orphan indexes
+            (agent rows with no surviving subscriber).
 """
 from __future__ import annotations
 
@@ -157,6 +158,13 @@ async def retrieve_candidates(
                    ON r.bpp_subscriber_id = av.bpp_subscriber_id
                   AND r.agent_beckn_id    = av.beckn_id
             WHERE av.status = 'current'
+              -- Lifecycle gates (Epic E5/E6): only agents promoted to 'live'
+              -- by the probe, and only those whose BPP is currently 'active'
+              -- in the Registry, are discoverable. Probation/failing agents
+              -- and suspended/deprecated BPPs are excluded. COALESCE handles
+              -- a missing subscriber row (orphan index) by excluding it.
+              AND av.probe_status = 'live'
+              AND COALESCE(s.status, '') = 'active'
               AND ($2::text     IS NULL OR av.jurisdiction       = $2)
               AND ($3::text[]   IS NULL OR av.languages          @> $3)
               AND ($4::text[]   IS NULL OR av.capability_tags    @> $4)
