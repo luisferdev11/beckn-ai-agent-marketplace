@@ -22,9 +22,33 @@ export function RegisterAgentForm({ token, onSuccess, onCancel }: Props) {
   const [pricingValue, setPricingValue] = useState('');
   const [endpoint, setEndpoint] = useState('');
   const [status, setStatus] = useState('active');
+  const [inputSchema, setInputSchema] = useState('');
+  const [outputSchema, setOutputSchema] = useState('');
   const [categories, setCategories] = useState<Category[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
+
+  // Parse a textarea value as a JSON Schema object. Returns the parsed
+  // object, or an error message describing why it is not acceptable. A
+  // valid contract must be a non-empty JSON object (the marketplace
+  // rejects empty / non-object schemas at publish time — strict mode).
+  function parseSchema(raw: string): { value?: Record<string, unknown>; error?: string } {
+    const trimmed = raw.trim();
+    if (!trimmed) return { error: 'Required — declare a JSON Schema' };
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (err) {
+      return { error: `Invalid JSON: ${(err as Error).message}` };
+    }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return { error: 'Must be a JSON object (e.g. {"type":"object",...})' };
+    }
+    if (Object.keys(parsed as object).length === 0) {
+      return { error: 'Empty schema constrains nothing — add at least "type"' };
+    }
+    return { value: parsed as Record<string, unknown> };
+  }
 
   useEffect(() => {
     fetch('/api/categories')
@@ -39,6 +63,12 @@ export function RegisterAgentForm({ token, onSuccess, onCancel }: Props) {
     if (!categoryId) e.category = 'Category required';
     if (description.length > 160) e.description = 'Max 160 characters';
     if (!endpoint.trim()) e.endpoint = 'Endpoint URL required';
+
+    const inParsed = parseSchema(inputSchema);
+    if (inParsed.error) e.inputSchema = inParsed.error;
+    const outParsed = parseSchema(outputSchema);
+    if (outParsed.error) e.outputSchema = outParsed.error;
+
     setErrors(e);
     if (Object.keys(e).length) return;
 
@@ -50,6 +80,8 @@ export function RegisterAgentForm({ token, onSuccess, onCancel }: Props) {
       pricing_model: { model: pricingType, value: parseFloat(pricingValue) || 0, currency: 'INR' },
       access_point_url: endpoint,
       status,
+      input_schema: inParsed.value,
+      output_schema: outParsed.value,
     };
 
     const res = await fetch('/api/publisher/agents', {
@@ -151,6 +183,42 @@ export function RegisterAgentForm({ token, onSuccess, onCancel }: Props) {
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
             </select>
+          </div>
+
+          {/* Rigorous schema contracts — required so the agent can be probed
+              and routed by the orchestrator pipeline (strict mode). */}
+          <div>
+            <label style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'var(--font-plex)', marginBottom: 4, display: 'block' }}>
+              Input Schema (JSON Schema) <span style={{ color: 'var(--trust-low)' }}>*</span>
+            </label>
+            <textarea
+              value={inputSchema}
+              onChange={e => setInputSchema(e.target.value)}
+              placeholder={'{\n  "type": "object",\n  "properties": { "text": { "type": "string" } },\n  "required": ["text"]\n}'}
+              rows={6}
+              style={{ ...inputStyle('inputSchema'), fontFamily: 'var(--font-mono)', fontSize: 12, resize: 'vertical' }}
+            />
+            {errors.inputSchema && <span style={{ fontSize: 11, color: 'var(--trust-low)' }}>{errors.inputSchema}</span>}
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4, fontFamily: 'var(--font-plex)' }}>
+              Describes the structured input your agent expects. Validated as JSON before submit.
+            </div>
+          </div>
+
+          <div>
+            <label style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'var(--font-plex)', marginBottom: 4, display: 'block' }}>
+              Output Schema (JSON Schema) <span style={{ color: 'var(--trust-low)' }}>*</span>
+            </label>
+            <textarea
+              value={outputSchema}
+              onChange={e => setOutputSchema(e.target.value)}
+              placeholder={'{\n  "type": "object",\n  "properties": { "result": { "type": "string" } },\n  "required": ["result"]\n}'}
+              rows={6}
+              style={{ ...inputStyle('outputSchema'), fontFamily: 'var(--font-mono)', fontSize: 12, resize: 'vertical' }}
+            />
+            {errors.outputSchema && <span style={{ fontSize: 11, color: 'var(--trust-low)' }}>{errors.outputSchema}</span>}
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4, fontFamily: 'var(--font-plex)' }}>
+              Describes the structured output your agent guarantees. Validated as JSON before submit.
+            </div>
           </div>
         </div>
 
