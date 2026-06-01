@@ -69,8 +69,9 @@ AGENTS = [
             "name": "Structured Data Extractor",
             "shortDesc": "Extracts entities (names, dates, amounts) from free text",
             "longDesc": (
-                "Parses unstructured text and returns a structured list of the "
-                "entities asked for via the `extract` payload field."
+                "Parses unstructured text and returns five fixed entity buckets "
+                "(organizations, dates, regulatory_references, monetary_amounts, "
+                "obligations) as a JSON object. Tuned for legal/regulatory text."
             ),
         },
         "provider": {"id": PROVIDER["id"], "descriptor": PROVIDER["descriptor"]},
@@ -80,8 +81,35 @@ AGENTS = [
             "@type": "beckn:AIAgentService",
             "capabilities": ["data_extraction", "ner"],
             "languages": ["en", "es"],
+            # Schemas are real JSON Schema (draft-2020-12) so the
+            # marketplace can validate the agent's input/output without
+            # consulting the partner's docs. ``inputSchemaContract`` and
+            # ``outputSchemaContract`` are the rigorous declarations;
+            # the loose ``inputSchema`` / ``outputSchema`` block stays
+            # for back-compat with the existing AgentFacts shape.
             "inputSchema": {"accepts": ["text/plain"], "maxSize": "100KB"},
             "outputSchema": {"returns": "application/json"},
+            "inputSchemaContract": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "minLength": 1},
+                },
+                "required": ["text"],
+            },
+            "outputSchemaContract": {
+                "type": "object",
+                "properties": {
+                    "organizations":         {"type": "array", "items": {"type": "string"}},
+                    "dates":                 {"type": "array", "items": {"type": "string"}},
+                    "regulatory_references": {"type": "array", "items": {"type": "string"}},
+                    "monetary_amounts":      {"type": "array", "items": {"type": "string"}},
+                    "obligations":           {"type": "array", "items": {"type": "string"}},
+                },
+                "required": [
+                    "organizations", "dates", "regulatory_references",
+                    "monetary_amounts", "obligations",
+                ],
+            },
             "pricing": {"model": "per_task", "currency": "MXN", "unitPrice": 4.50},
             "sla": {"maxLatency": "PT4S", "accuracy": 0.90, "uptime": 0.99},
             "dataResidency": "MX",

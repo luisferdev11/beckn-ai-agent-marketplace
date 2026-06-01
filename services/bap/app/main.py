@@ -21,6 +21,7 @@ from app.config import SERVICE_NAME, PORT
 from app.limiter import limiter
 from app.routes.webhook import router as webhook_router
 from app.routes.api import router as api_router
+from app.routes.demo import router as demo_router
 from app.routes.plan import router as plan_router
 
 logging.basicConfig(
@@ -50,6 +51,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.include_router(webhook_router)
 app.include_router(api_router)
 app.include_router(plan_router)
+app.include_router(demo_router)
 
 
 @app.exception_handler(httpx.ConnectError)

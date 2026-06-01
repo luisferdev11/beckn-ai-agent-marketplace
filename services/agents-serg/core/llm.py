@@ -10,13 +10,16 @@ GROQ_MODEL   = "llama-3.1-8b-instant"   # cheapest + fastest on Groq free tier
 MAX_TOKENS   = 400                       # keeps responses short and within free limits
 
 
-def call_llm(prompt: str, system: str = "") -> tuple[str, int]:
+def call_llm(prompt: str, system: str = "", *, json_mode: bool = False) -> tuple[str, int]:
     """
     Send a prompt to the LLM and return (response_text, total_tokens_used).
 
     Args:
-        prompt: the user message
-        system: optional system instruction (sets the LLM's role/behaviour)
+        prompt:     the user message
+        system:     optional system instruction (sets the LLM's role/behaviour)
+        json_mode:  when True, ask Groq to force ``response_format=json_object``
+                    so the response is guaranteed-valid JSON. The caller still
+                    has to parse it.
 
     Returns:
         (text, token_count) — text is the LLM answer,
@@ -34,12 +37,18 @@ def call_llm(prompt: str, system: str = "") -> tuple[str, int]:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
-    body = json.dumps({
+    payload: dict = {
         "model":       GROQ_MODEL,
         "messages":    messages,
         "max_tokens":  MAX_TOKENS,
         "temperature": 0.2,
-    }).encode()
+    }
+    if json_mode:
+        # Groq supports OpenAI's response_format directive — it forces
+        # the model to emit syntactically-valid JSON. Required for the
+        # legal-pipeline demo's structured extractor.
+        payload["response_format"] = {"type": "json_object"}
+    body = json.dumps(payload).encode()
 
     req = urllib.request.Request(
         GROQ_URL,
