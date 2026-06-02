@@ -170,6 +170,18 @@ def _to_agent_facts(agent: dict) -> dict:
         facts["sla"] = sla
     if pricing:
         facts["pricing"] = pricing
+
+    # Carry the rigorous input/output JSON Schema contracts into AgentFacts.
+    # The CDS requires both under strict mode; the agent probe uses them to
+    # synthesise test input and validate output. The legacy ``inputSchema``
+    # (accepts/maxSize) is NOT a JSON Schema and is only used above to derive
+    # skill input modes, so it must not be published as the contract.
+    input_contract = legacy.get("inputSchemaContract")
+    output_contract = legacy.get("outputSchemaContract")
+    if isinstance(input_contract, dict) and input_contract:
+        facts["inputSchema"] = input_contract
+    if isinstance(output_contract, dict) and output_contract:
+        facts["outputSchema"] = output_contract
     return facts
 
 

@@ -58,6 +58,18 @@ AGENTS = [
             "languages": ["en", "es"],
             "inputSchema": {"accepts": ["text/plain"], "maxSize": "100KB"},
             "outputSchema": {"returns": "text/plain"},
+            # Rigorous JSON Schema contracts (draft-2020-12) — required by
+            # the CDS under strict mode and used by the agent probe.
+            "inputSchemaContract": {
+                "type": "object",
+                "properties": {"text": {"type": "string", "minLength": 1}},
+                "required": ["text"],
+            },
+            "outputSchemaContract": {
+                "type": "object",
+                "properties": {"summary": {"type": "string"}},
+                "required": ["summary"],
+            },
             "pricing": {"model": "per_task", "currency": "MXN", "unitPrice": 5.00},
             "sla": {"maxLatency": "PT3S", "accuracy": 0.93, "uptime": 0.99},
             "dataResidency": "MX",
@@ -134,6 +146,19 @@ AGENTS = [
             "languages": ["en"],
             "inputSchema": {"accepts": ["text/plain"], "maxSize": "200KB"},
             "outputSchema": {"returns": "text/plain"},
+            "inputSchemaContract": {
+                "type": "object",
+                "properties": {
+                    "code": {"type": "string", "minLength": 1},
+                    "language": {"type": "string"},
+                },
+                "required": ["code"],
+            },
+            "outputSchemaContract": {
+                "type": "object",
+                "properties": {"review": {"type": "string"}},
+                "required": ["review"],
+            },
             "pricing": {"model": "per_task", "currency": "MXN", "unitPrice": 8.00},
             "sla": {"maxLatency": "PT8S", "accuracy": 0.88, "uptime": 0.99},
             "dataResidency": "MX",
@@ -158,6 +183,19 @@ AGENTS = [
             "languages": ["en", "es", "fr", "pt"],
             "inputSchema": {"accepts": ["text/plain"], "maxSize": "50KB"},
             "outputSchema": {"returns": "text/plain"},
+            "inputSchemaContract": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "minLength": 1},
+                    "target_lang": {"type": "string", "minLength": 2},
+                },
+                "required": ["text", "target_lang"],
+            },
+            "outputSchemaContract": {
+                "type": "object",
+                "properties": {"translation": {"type": "string"}},
+                "required": ["translation"],
+            },
             "pricing": {"model": "per_task", "currency": "MXN", "unitPrice": 3.50},
             "sla": {"maxLatency": "PT3S", "accuracy": 0.92, "uptime": 0.99},
             "dataResidency": "MX",
@@ -182,6 +220,19 @@ AGENTS = [
             "languages": ["en", "es"],
             "inputSchema": {"accepts": ["text/plain"], "maxSize": "20KB"},
             "outputSchema": {"returns": "text/plain"},
+            "inputSchemaContract": {
+                "type": "object",
+                "properties": {
+                    "brief": {"type": "string", "minLength": 1},
+                    "tone": {"type": "string"},
+                },
+                "required": ["brief"],
+            },
+            "outputSchemaContract": {
+                "type": "object",
+                "properties": {"email": {"type": "string"}},
+                "required": ["email"],
+            },
             "pricing": {"model": "per_task", "currency": "MXN", "unitPrice": 2.50},
             "sla": {"maxLatency": "PT3S", "accuracy": 0.90, "uptime": 0.99},
             "dataResidency": "MX",
@@ -206,6 +257,20 @@ AGENTS = [
             "languages": ["en", "es"],
             "inputSchema": {"accepts": ["text/plain"], "maxSize": "20KB"},
             "outputSchema": {"returns": "application/json"},
+            "inputSchemaContract": {
+                "type": "object",
+                "properties": {"text": {"type": "string", "minLength": 1}},
+                "required": ["text"],
+            },
+            "outputSchemaContract": {
+                "type": "object",
+                "properties": {
+                    "label": {"type": "string",
+                              "enum": ["positive", "neutral", "negative"]},
+                    "rationale": {"type": "string"},
+                },
+                "required": ["label"],
+            },
             "pricing": {"model": "per_task", "currency": "MXN", "unitPrice": 2.00},
             "sla": {"maxLatency": "PT2S", "accuracy": 0.91, "uptime": 0.99},
             "dataResidency": "MX",
