@@ -280,21 +280,29 @@ and a per-item path.
 | Currency `INRR` rejected | Must be 3 characters (ISO-4217) | `INR` |
 | `pricing.model` rejected | Earlier strict enum (now lifted in v1.0.1+) | Use any string from the common list |
 
-### 5.5 Declaring rigorous input/output JSON Schemas (recommended for pipelines)
+### 5.5 Declaring rigorous input/output JSON Schemas (REQUIRED)
 
-The minimum AgentFacts contract above only describes the MIME types your agent
-accepts and emits (`skills[].inputModes` / `outputModes`). That's enough for
-single-agent use cases. **For your agent to be eligible to participate in
-multi-step pipelines** (where the marketplace's orchestrator chains your
-output into a downstream agent's input), you must additionally publish
-real JSON Schemas at the agent level:
+> **Breaking change (2026-06):** rigorous schemas are no longer optional.
+> The CDS runs in **strict mode by default** — a published item without a
+> non-empty `inputSchema` AND `outputSchema` is **rejected** with
+> `error.code = "MISSING_SCHEMA_CONTRACT"` and never reaches the index. An
+> agent that is not indexed is not discoverable. (Operators can flip the
+> network to permissive mode with `STRICT_SCHEMAS=false`, in which case the
+> item is indexed but flagged `pipeline_eligible=false` and excluded from
+> orchestrated pipelines.)
+
+The minimum AgentFacts contract describes only the MIME types your agent
+accepts and emits (`skills[].inputModes` / `outputModes`). That is NOT
+enough. You must additionally declare **two real JSON Schemas at the agent
+level**, named exactly `inputSchema` and `outputSchema`:
 
 ```json
 {
   "id": "acme:doc-summarizer-v1",
   "label": "Document Summarizer",
   ...
-  "inputSchemaContract": {
+  "modelProvider": "openai",
+  "inputSchema": {
     "type": "object",
     "properties": {
       "document": {"type": "string", "minLength": 1},
@@ -302,7 +310,7 @@ real JSON Schemas at the agent level:
     },
     "required": ["document"]
   },
-  "outputSchemaContract": {
+  "outputSchema": {
     "type": "object",
     "properties": {
       "summary":    {"type": "string", "minLength": 1},
@@ -314,50 +322,57 @@ real JSON Schemas at the agent level:
 }
 ```
 
+> **Field naming:** the AgentFacts document you publish uses `inputSchema` /
+> `outputSchema`. Some internal demo code (`services/bap/app/demo/specs.py`)
+> refers to the same concept as `inputSchemaContract` / `outputSchemaContract`
+> — that is a BAP-side planner detail and is **not** a valid AgentFacts field.
+> Because AgentFacts v1 sets `additionalProperties: false`, publishing
+> `*Contract` keys will be rejected. Publish `inputSchema` / `outputSchema`.
+
 **What the marketplace does with these:**
 
-1. **Inbound validation** — Before the orchestrator dispatches a `confirm`
-   carrying a payload to your agent, it validates that payload against your
-   `inputSchemaContract`. A malformed payload is rejected at the marketplace
-   boundary; you never see it. This is the buyer's protection.
+1. **Admission probe** — After publish, your agent enters `probe_status =
+   "probation"` and is NOT yet discoverable. The marketplace's agent probe
+   synthesises a sample input from your `inputSchema`, exercises the agent,
+   validates the result against your `outputSchema`, and checks latency
+   against your declared SLA. Only on success is the agent promoted to
+   `live` and surfaced in `discover`. A failing probe parks it as
+   `failing_probe` (still hidden). See §6 for the full lifecycle.
 
-2. **Outbound validation** — When your agent's `on_status` arrives with a
-   result, the orchestrator validates it against your `outputSchemaContract`
-   *before* surfacing it to the buyer or passing it to a downstream step.
-   If your agent drifts from its declared contract, the marketplace marks
-   the step `FAILED` with a precise error path (e.g. `"summary" missing` or
-   `"key_points" must be array`). This is the seller's accountability.
+2. **Inbound validation** — Before the orchestrator dispatches a payload to
+   your agent it validates that payload against your `inputSchema`. A
+   malformed payload is rejected at the marketplace boundary; you never see
+   it. This is the buyer's protection.
 
-3. **Compatibility check** — The planner consults your output schema to
-   decide whether your agent can feed into the next skill in a pipeline.
-   Without an `outputSchemaContract`, the planner can only place your agent
-   as a pipeline terminus — not as an intermediate step.
+3. **Outbound validation** — When your agent's result arrives, the
+   orchestrator validates it against your `outputSchema` before surfacing it
+   or chaining it into a downstream step. Drift from your declared contract
+   marks the step `FAILED` with a precise error path. This is the seller's
+   accountability.
 
 **Rules:**
 
 - Use [JSON Schema draft 2020-12](https://json-schema.org/draft/2020-12/schema).
+- Both schemas must be **non-empty objects** with top-level `type: "object"`.
+  An empty `{}` constrains nothing and is treated as missing (rejected).
+- Every declared field must carry its declared type — **no `null` values for
+  string-typed fields** (e.g. `modelProvider`). AgentFacts v1 is
+  `additionalProperties: false` and strictly typed; a `null` where a string
+  is expected fails validation with `SCHEMA_VIOLATION: None is not of type
+  'string'` and the whole item is rejected. Omit a field rather than sending
+  `null`.
 - Be specific about `required` fields — every field a downstream agent might
   read must be marked `required`, otherwise the planner can't safely chain.
-- Keep top-level type `"object"` for both schemas. Primitive-typed agents
-  (return-a-bare-string) cannot participate in pipelines today; wrap your
-  result in a single-key object.
-- Don't use `additionalProperties: false` unless you really mean it — the
-  marketplace may inject `_marketplace*` debug fields into the payload
-  on the way through.
+- Primitive-typed agents (return-a-bare-string) cannot participate in
+  pipelines; wrap your result in a single-key object.
 - Schemas are immutable per agent version. Bump `version` when you change them.
 
 **Pipeline-ready example — Story 1 demo:**
 
 The marketplace ships a worked example at `/api/demo/spec`. Two real BPPs
 collaborate: Tecla (legal summarizer) → Serg (structured extractor). Both
-agents publish rigorous schemas; the orchestrator validates every hop.
-See `services/bap/app/demo/specs.py` for the exact `inputSchemaContract`
-and `outputSchemaContract` each agent declares, and `services/bap/app/demo/schema.py`
-for the validator the marketplace runs on each payload.
-
-**If you skip this section** your agent is still discoverable and runnable
-solo, but the planner won't ever pick it for multi-step flows — which is
-where the marketplace's biggest value-add lives.
+agents publish rigorous `inputSchema` / `outputSchema`; the orchestrator
+validates every hop.
 
 ---
 
@@ -401,6 +416,44 @@ Your BPP                 Your ONIX-BPP            CDS (us)
 **Republish frequency**: re-publish your catalog at least every 24 hours
 (after that, agents start losing `freshness` score in discover). Most
 operators republish on every catalog change + a daily heartbeat.
+
+### 6.1 What happens after publish — the agent lifecycle
+
+A published item does **not** become discoverable immediately. It moves
+through a lifecycle gate:
+
+```
+publish ──► per-item validation ──► probation ──► probe ──► live  (discoverable)
+              │                                       │
+              │ AgentFacts invalid / missing          │ probe fails
+              │ schema contract                       ▼
+              ▼                                   failing_probe (hidden)
+            REJECTED (not indexed)
+```
+
+1. **Per-item validation (synchronous, reported in `on_publish`)** — each
+   resource is validated against AgentFacts v1 and the schema-contract rule.
+   Rejections you may see in `on_publish.results[].errors[].code`:
+   - `MISSING_SCHEMA_CONTRACT` — no non-empty `inputSchema`/`outputSchema` (§5.5).
+   - `SCHEMA_VIOLATION` — AgentFacts shape error (e.g. a `null` where a string
+     is required, an unknown field under `additionalProperties:false`).
+   - `INDEX_FAILED` — internal indexing error (rare; retry).
+   Accepted items are indexed with `probe_status = "probation"`.
+
+2. **Probe (asynchronous)** — the marketplace exercises your agent with a
+   synthetic input built from your `inputSchema` and validates the output
+   against your `outputSchema`. Pass → `probe_status = "live"` and the agent
+   appears in `discover`. Fail → `failing_probe` (hidden until a passing
+   re-probe). You can trigger a re-probe with
+   `POST /api/probes/{your_subscriber_id}/{agent_beckn_id}/retry`.
+
+3. **Discoverability gate** — `discover` only returns agents that are both
+   `probe_status = "live"` AND owned by an `active` subscriber. A suspended
+   or pending BPP, or a probation/failing agent, is silently excluded.
+
+So: a clean publish with valid schemas + a working agent ⇒ discoverable
+within a probe cycle. A publish that is `ACCEPTED` but whose agent never
+passes the probe stays invisible — check `GET /api/probes/{sub}/{agent}`.
 
 ---
 
