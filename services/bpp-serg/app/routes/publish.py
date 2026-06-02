@@ -170,6 +170,15 @@ def _to_agent_facts(agent: dict) -> dict:
         facts["sla"] = sla
     if pricing:
         facts["pricing"] = pricing
+
+    # Carry through real JSON Schema contracts when present. The CDS
+    # requires non-empty inputSchema/outputSchema dicts to accept an
+    # agent in strict mode (pipeline eligibility).
+    for schema_key in ("inputSchema", "outputSchema"):
+        schema = legacy.get(schema_key)
+        if isinstance(schema, dict) and schema.get("type"):
+            facts[schema_key] = schema
+
     return facts
 
 

@@ -56,8 +56,20 @@ AGENTS = [
             "@type": "beckn:AIAgentService",
             "capabilities": ["document_summary", "text_summary"],
             "languages": ["en", "es"],
-            "inputSchema": {"accepts": ["text/plain"], "maxSize": "100KB"},
-            "outputSchema": {"returns": "text/plain"},
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "minLength": 1},
+                },
+                "required": ["text"],
+            },
+            "outputSchema": {
+                "type": "object",
+                "properties": {
+                    "summary": {"type": "string"},
+                },
+                "required": ["summary"],
+            },
             "pricing": {"model": "per_task", "currency": "MXN", "unitPrice": 5.00},
             "sla": {"maxLatency": "PT3S", "accuracy": 0.93, "uptime": 0.99},
             "dataResidency": "MX",
@@ -81,22 +93,14 @@ AGENTS = [
             "@type": "beckn:AIAgentService",
             "capabilities": ["data_extraction", "ner"],
             "languages": ["en", "es"],
-            # Schemas are real JSON Schema (draft-2020-12) so the
-            # marketplace can validate the agent's input/output without
-            # consulting the partner's docs. ``inputSchemaContract`` and
-            # ``outputSchemaContract`` are the rigorous declarations;
-            # the loose ``inputSchema`` / ``outputSchema`` block stays
-            # for back-compat with the existing AgentFacts shape.
-            "inputSchema": {"accepts": ["text/plain"], "maxSize": "100KB"},
-            "outputSchema": {"returns": "application/json"},
-            "inputSchemaContract": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "text": {"type": "string", "minLength": 1},
                 },
                 "required": ["text"],
             },
-            "outputSchemaContract": {
+            "outputSchema": {
                 "type": "object",
                 "properties": {
                     "organizations":         {"type": "array", "items": {"type": "string"}},
