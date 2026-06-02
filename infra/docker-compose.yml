@@ -277,7 +277,6 @@ services:
       - PORT=3002
       - BPP_CALLBACK_URL=http://onix-bpp:8082/bpp/caller
       - ORCHESTRATOR_URL=http://orchestrator:3003
-      - ORCHESTRATOR2_URL=http://orchestrator2:3008
       - SERVICE_NAME=bpp-provider
       - AGENT_URL_MAP={"agent-summarizer-001":"http://agents:3004","agent-code-reviewer-001":"http://agents:3004","agent-data-extractor-001":"http://agents:3004"}
       - DB_HOST=postgres-bpp
@@ -287,8 +286,6 @@ services:
       - DB_PASSWORD=${BPP_DB_PASSWORD}
     depends_on:
       orchestrator:
-        condition: service_healthy
-      orchestrator2:
         condition: service_healthy
       postgres-bpp:
         condition: service_healthy
