@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
 """
-Pipeline integration test — verifies the planner → bridge → orchestrator v2 flow.
+Pipeline integration test — per-step Beckn contracts.
 
 Drives the full pipeline lifecycle:
-  1. Health checks (BAP, BPP, orchestrator2, agents, planner)
-  2. POST /api/plan to get a multi-step Plan + transaction_ids
-  3. POST /api/pipeline/run to execute the pipeline via Beckn confirm
-  4. Poll /api/contracts/status until pipeline completes or fails
-  5. Validate pipeline results (execution_summary, per-step status)
+  1. Health checks (BAP, BPP, planner, agents, mock-network)
+  2. POST /api/plan → multi-step Plan + transaction_ids
+  3. POST /api/pipeline/run → per-step select→init→confirm→status
+  4. Validate results (per-step status, final output)
 
 Usage:
     python scripts/test_pipeline.py
 
-Requires full stack running: docker compose up
-  (bap + bpp + orchestrator + orchestrator2 + planner + agents + mock-network)
+Requires full stack: docker compose up
 """
 
 import json
@@ -24,19 +22,15 @@ import urllib.request
 
 BAP = "http://localhost:3001/api"
 
-# Prompt designed to produce a multi-step plan using agents from BOTH BPPs:
+# Prompt designed to use agents from BOTH BPPs:
 #   - agent-summarizer-001 (Tecla, bpp-provider, agents:3004)
 #   - extractor-v1 (Serg Ops, bpp-serg, agents-serg:3006)
-# The planner should discover both via CDS and compose a pipeline.
 PLAN_PROMPT = (
     "I have a legal document. First, summarize the key points of the document. "
     "Then, extract structured entities like organization names, dates, and "
     "monetary amounts from the document."
 )
 
-# User input — keys must match what the planner's input_mapping references via
-# $pipeline_input.<key>. The planner typically maps to "document" or "text"
-# depending on the agent's inputSchema, so we provide both.
 _DOCUMENT_TEXT = (
     "This contract establishes that Party A shall deliver 100 units of "
     "product X to Party B within 30 days of signing. Payment of $50,000 "
@@ -48,8 +42,6 @@ USER_INPUT = {
     "document": _DOCUMENT_TEXT,
 }
 
-
-# ── HTTP helpers ──────────────────────────────────────────────────────────────
 
 def post(url: str, body: dict, timeout: int = 120) -> tuple[int, dict]:
     data = json.dumps(body).encode()
@@ -72,39 +64,20 @@ def get(url: str, timeout: int = 10) -> dict:
         return json.loads(r.read().decode())
 
 
-def wait_for_callback(txn_id: str, expected_action: str, timeout: int = 30) -> dict | None:
-    """Poll /api/callbacks/ultimo until we see the expected action."""
-    start = time.time()
-    while time.time() - start < timeout:
-        try:
-            cb = get(f"{BAP}/callbacks/ultimo?transaction_id={txn_id}")
-            if cb.get("action") == expected_action:
-                return cb
-        except Exception:
-            pass
-        time.sleep(1)
-    return None
-
-
-# ── Main test ─────────────────────────────────────────────────────────────────
-
 def main():
     print("=" * 60)
-    print("PIPELINE TEST — Planner + Bridge + Orchestrator v2")
+    print("PIPELINE TEST — Per-Step Beckn Contracts")
     print("=" * 60)
 
-    # ── Step 1: Health checks ────────────────────────────────────────────
-    print("\n[1/5] Health checks...")
-    # Services critical for the pipeline flow (must be healthy to proceed).
+    # ── Step 1: Health checks ────────────────────────────────────────
+    print("\n[1/4] Health checks...")
     critical = [
         ("bap-ai",        3001),
         ("bpp-ai",        3002),
-        ("orchestrator2", 3008),
+        ("bpp-serg",      3005),
         ("planner",       3010),
         ("mock-network",  8090),
     ]
-    # Non-critical: agents health pings Groq which may hang on rate limit.
-    # The pipeline test can still verify the integration even if agents are slow.
     optional = [
         ("orchestrator",  3003),
         ("agents",        3004),
@@ -125,22 +98,21 @@ def main():
     for name, port in optional:
         try:
             h = get(f"http://localhost:{port}/health", timeout=3)
-            status = h.get("status", "?")
-            print(f"  {name}: {status}")
+            print(f"  {name}: {h.get('status', '?')}")
         except Exception:
-            print(f"  {name}: slow (non-critical, skipping)")
+            print(f"  {name}: slow (non-critical)")
 
     if not all_healthy:
-        print("\n  FAIL: critical services not healthy. Run: docker compose up --build")
+        print("\n  FAIL: critical services not healthy")
         sys.exit(1)
     print("  All critical services healthy.")
 
-    # ── Step 2: Create a plan via /api/plan ───────────────────────────────
-    print(f"\n[2/5] Creating plan: \"{PLAN_PROMPT[:60]}...\"")
+    # ── Step 2: Create plan ──────────────────────────────────────────
+    print(f"\n[2/4] Creating plan: \"{PLAN_PROMPT[:60]}...\"")
     status, plan_resp = post(f"{BAP}/plan", {
         "prompt": PLAN_PROMPT,
         "input_format": "text/plain",
-        "output_format": "text/plain",
+        "output_format": "application/json",
     })
 
     if status != 200 or not plan_resp.get("plan"):
@@ -151,37 +123,28 @@ def main():
     plan = plan_resp["plan"]
     txn_ids = plan_resp.get("transaction_ids", [])
     steps = plan.get("steps", [])
-    estimates = plan.get("estimates", {})
 
     print(f"  Plan: {plan.get('summary', '?')[:80]}")
     print(f"  Steps: {len(steps)}")
     for s in steps:
         rec = s.get("recommended", {})
-        print(f"    {s['id']}: {rec.get('name', '?')} (skill={s.get('skill_id')}, "
-              f"depends={s.get('depends_on', [])})")
-    print(f"  Estimates: {estimates.get('currency', '?')} {estimates.get('total_cost', '?')}, "
-          f"~{estimates.get('max_latency_ms', '?')}ms, {estimates.get('steps_count', '?')} steps")
-    print(f"  Transaction IDs from discover: {len(txn_ids)}")
+        print(f"    {s['id']}: {rec.get('name', '?')} (agent={rec.get('agent_id')}, "
+              f"provider={rec.get('provider')}, depends={s.get('depends_on', [])})")
+    print(f"  Discover transaction IDs: {len(txn_ids)}")
 
-    if len(steps) < 1:
-        print("  FAIL: expected at least 1 step in the plan")
+    if len(steps) < 1 or not txn_ids:
+        print("  FAIL: expected at least 1 step and transaction_ids")
         sys.exit(1)
 
-    if not txn_ids:
-        print("  FAIL: no transaction_ids returned (needed for pipeline/run)")
-        sys.exit(1)
-
-    # ── Step 3: Run the pipeline via /api/pipeline/run ────────────────────
-    print("\n[3/5] Running pipeline (select → init → confirm)...")
-    pipeline_body = {
+    # ── Step 3: Run pipeline ─────────────────────────────────────────
+    print("\n[3/4] Running pipeline (per-step Beckn contracts)...")
+    t0 = time.time()
+    status, run_resp = post(f"{BAP}/pipeline/run", {
         "plan": plan,
         "prompt": PLAN_PROMPT,
         "user_input": USER_INPUT,
         "transaction_ids": txn_ids,
-    }
-
-    t0 = time.time()
-    status, run_resp = post(f"{BAP}/pipeline/run", pipeline_body, timeout=60)
+    }, timeout=180)
     elapsed = time.time() - t0
 
     if status != 200:
@@ -189,112 +152,47 @@ def main():
         print(f"  FAIL: /api/pipeline/run returned {status}: {error}")
         sys.exit(1)
 
-    pipeline_txn_id = run_resp.get("transaction_id")
-    contract = run_resp.get("contract", {})
+    pipeline_id = run_resp.get("pipeline_id", "?")
+    overall_status = run_resp.get("status", "?")
+    step_results = run_resp.get("steps", [])
+    final_result = run_resp.get("result")
 
-    if not pipeline_txn_id:
-        print("  FAIL: no transaction_id in pipeline/run response")
-        sys.exit(1)
+    print(f"  Pipeline ID: {pipeline_id[:8]}...")
+    print(f"  Total time: {elapsed:.1f}s")
+    print(f"  Status: {overall_status}")
+    print(f"  Steps executed: {len(step_results)}")
 
-    print(f"  Pipeline transaction: {pipeline_txn_id[:8]}...")
-    print(f"  Beckn lifecycle completed in {elapsed:.1f}s")
-    print(f"  Contract ID: {contract.get('id', '?')}")
+    for sr in step_results:
+        symbol = "+" if sr["status"] == "COMPLETED" else "-" if sr["status"] == "FAILED" else "~"
+        print(f"    [{symbol}] {sr['step_id']}: {sr.get('agent_name', sr['agent_id'])} "
+              f"@ {sr['bpp_id']} → {sr['status']} ({sr.get('duration_ms', 0)}ms)")
+        if sr.get("error"):
+            print(f"        error: {sr['error'][:100]}")
+        if sr.get("output"):
+            output = sr["output"]
+            if isinstance(output, dict):
+                for key, value in output.items():
+                    val_str = json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
+                    val_str = val_str.replace("\n", " ")
+                    if len(val_str) > 150:
+                        val_str = val_str[:150] + "..."
+                    print(f"        output.{key}: {val_str}")
+            else:
+                preview = str(output)[:200]
+                print(f"        output: {preview}")
 
-    # ── Step 4: Poll /api/contracts/status for pipeline result ────────────
-    print("\n[4/5] Polling for pipeline execution result...")
-    max_polls = 60  # ~3 minutes
-    poll_interval = 3
-    final_status = None
-    final_perf = None
+    if final_result:
+        print(f"\n  --- Final merged result ---")
+        for key, value in final_result.items():
+            val_str = json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
+            val_str = val_str.replace("\n", " ")
+            if len(val_str) > 200:
+                val_str = val_str[:200] + "..."
+            print(f"    {key}: {val_str}")
 
-    for attempt in range(max_polls):
-        time.sleep(poll_interval)
-
-        status_code, status_resp = post(f"{BAP}/contracts/status", {
-            "transaction_id": pipeline_txn_id,
-        })
-        if status_code != 200:
-            print(f"  status poll {attempt + 1}: HTTP {status_code}")
-            continue
-
-        # Wait for on_status callback
-        cb = wait_for_callback(pipeline_txn_id, "on_status", timeout=10)
-        if not cb:
-            print(f"  status poll {attempt + 1}: waiting for on_status...")
-            continue
-
-        msg = cb.get("message", {})
-        if isinstance(msg, str):
-            try:
-                msg = json.loads(msg)
-            except Exception:
-                msg = {}
-
-        contract_data = msg.get("contract", {})
-        perf_list = contract_data.get("performance", [])
-        if not perf_list:
-            print(f"  status poll {attempt + 1}: no performance data yet")
-            continue
-
-        perf = perf_list[0]
-        pa = perf.get("performanceAttributes", {})
-        exec_status = pa.get("status") or perf.get("status", {}).get("code", "PENDING")
-        short_desc = perf.get("status", {}).get("shortDesc", "")
-
-        print(f"  status poll {attempt + 1}: {exec_status} — {short_desc[:60]}")
-
-        if exec_status in ("COMPLETED", "PARTIAL", "FAILED"):
-            final_status = exec_status
-            final_perf = pa
-            break
-
-    if not final_status:
-        print("  TIMEOUT: pipeline did not reach a terminal state in 3 minutes")
-        sys.exit(1)
-
-    # ── Step 5: Validate results + show agent outputs ──────────────────────
-    print(f"\n[5/5] Validating results (status={final_status})...")
-
-    is_pipeline = final_perf.get("pipeline_mode", False)
-    exec_summary = final_perf.get("execution_summary", [])
-    result = final_perf.get("result", {})
-
-    print(f"  pipeline_mode: {is_pipeline}")
-    print(f"  execution_summary: {len(exec_summary)} steps")
-
-    if exec_summary:
-        for step in exec_summary:
-            step_status = step.get("status", "?")
-            symbol = "+" if step_status == "success" else "-" if step_status == "failed" else "~"
-            print(f"    [{symbol}] {step.get('step_id', '?')}: {step.get('agent', '?')} "
-                  f"→ {step_status} ({step.get('attempts', 0)} attempts)")
-            if step.get("note"):
-                print(f"        note: {step['note']}")
-
-    # Show the full performance attributes for debugging agent outputs
-    print("\n  --- Full performanceAttributes (agent outputs visible here) ---")
-    for key in ("startedAt", "completedAt", "latencyMs", "model"):
-        val = final_perf.get(key)
-        if val:
-            print(f"    {key}: {val}")
-
-    print("\n  --- Final pipeline result (interpolated from agent outputs) ---")
-    if result:
-        if isinstance(result, dict):
-            for key, value in result.items():
-                val_str = json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
-                val_str = val_str.replace("\n", " ")
-                if len(val_str) > 300:
-                    val_str = val_str[:300] + "..."
-                print(f"    {key}: {val_str}")
-        else:
-            preview = json.dumps(result, ensure_ascii=False)[:500]
-            print(f"    {preview}")
-    else:
-        print("    (empty)")
-
-    # ── Verdict ───────────────────────────────────────────────────────────
-    print("\n" + "=" * 60)
+    # ── Step 4: Validate ─────────────────────────────────────────────
+    print(f"\n[4/4] Validation...")
+    print("=" * 60)
     checks_passed = 0
     checks_total = 0
 
@@ -307,29 +205,35 @@ def main():
             checks_passed += 1
 
     check("Plan created with >= 1 step", len(steps) >= 1)
-    check("transaction_ids returned from plan", len(txn_ids) >= 1)
-    check("Pipeline transaction_id obtained", bool(pipeline_txn_id))
-    check("Terminal status reached", final_status in ("COMPLETED", "PARTIAL", "FAILED"))
-    check("pipeline_mode flag present", is_pipeline)
-    check("execution_summary returned", len(exec_summary) >= 1)
+    check("Pipeline executed", bool(pipeline_id) and pipeline_id != "?")
+    check("Terminal status", overall_status in ("COMPLETED", "PARTIAL", "FAILED"))
+    check("Step results returned", len(step_results) >= 1)
 
-    if final_status == "COMPLETED":
-        check("All steps succeeded", all(s.get("status") == "success" for s in exec_summary))
-        check("Result is non-empty", bool(result))
-    elif final_status == "PARTIAL":
-        check("At least one step succeeded", any(s.get("status") == "success" for s in exec_summary))
-        print("  ~ PARTIAL: some steps failed but pipeline produced partial results")
-    elif final_status == "FAILED":
-        print("  ~ FAILED: pipeline execution failed (may be expected if agents are not available)")
-        check("Error information present", bool(final_perf.get("result") or exec_summary))
+    completed_steps = [s for s in step_results if s["status"] == "COMPLETED"]
+    check("At least one step completed", len(completed_steps) >= 1)
+
+    # Check cross-BPP: different bpp_ids in results
+    bpp_ids = set(s["bpp_id"] for s in step_results if s["bpp_id"])
+    if len(bpp_ids) > 1:
+        check(f"Cross-BPP pipeline ({len(bpp_ids)} BPPs: {bpp_ids})", True)
+    else:
+        print(f"  [~] Single BPP pipeline (BPPs: {bpp_ids})")
+
+    if overall_status == "COMPLETED":
+        check("All steps completed", len(completed_steps) == len(step_results))
+        check("Final result non-empty", bool(final_result))
+    elif overall_status == "PARTIAL":
+        print(f"  ~ PARTIAL: {len(completed_steps)}/{len(step_results)} steps completed")
+    elif overall_status == "FAILED":
+        print(f"  ~ FAILED: pipeline execution failed")
 
     print(f"\n  {checks_passed}/{checks_total} checks passed")
     if checks_passed == checks_total:
         print("\n  PASS — Pipeline integration working end-to-end")
-    elif checks_passed >= checks_total - 2:
-        print("\n  ~ PARTIAL PASS — Core pipeline flow works, some checks failed")
+    elif checks_passed >= checks_total - 1:
+        print("\n  ~ PARTIAL PASS — Core flow works")
     else:
-        print("\n  FAIL — Pipeline integration has issues")
+        print("\n  FAIL")
         sys.exit(1)
 
 

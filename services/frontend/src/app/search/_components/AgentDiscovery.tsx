@@ -168,8 +168,9 @@ export function AgentDiscovery({ header }: { header?: ReactNode }) {
       const userInput: Record<string, string> = { text: query.trim() };
       const result = await runPipeline(planResult, query.trim(), userInput, planTxnIds);
 
-      // Store pipeline info in sessionStorage for the result page
-      sessionStorage.setItem(`beckn_agent_${result.transaction_id}`, JSON.stringify({
+      // Store pipeline result in sessionStorage for the result page
+      sessionStorage.setItem(`beckn_pipeline_${result.pipeline_id}`, JSON.stringify(result));
+      sessionStorage.setItem(`beckn_agent_${result.pipeline_id}`, JSON.stringify({
         id: 'pipeline',
         name: planResult.summary || 'Multi-Agent Pipeline',
         icon: '\u{1F517}',
@@ -177,7 +178,7 @@ export function AgentDiscovery({ header }: { header?: ReactNode }) {
         pipeline_mode: true,
       }));
 
-      router.push(`/result/${result.transaction_id}`);
+      router.push(`/result/${result.pipeline_id}`);
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Pipeline execution failed';
       setError(message);

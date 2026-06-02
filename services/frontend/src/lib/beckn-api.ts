@@ -479,6 +479,25 @@ export async function plan(prompt: string): Promise<PlanResponse & { plan: Plan 
  * lifecycle (select → init → confirm) with the pipeline plan embedded.
  * Returns the transaction_id so the caller can poll /api/contracts/status.
  */
+export interface PipelineStepResult {
+  step_id: string;
+  agent_id: string;
+  agent_name: string;
+  bpp_id: string;
+  transaction_id: string;
+  status: string;
+  duration_ms: number;
+  output: Record<string, unknown> | null;
+  error: string | null;
+}
+
+export interface PipelineResult {
+  pipeline_id: string;
+  status: string;
+  steps: PipelineStepResult[];
+  result: Record<string, unknown> | null;
+}
+
 export async function runPipeline(
   pipelinePlan: Plan,
   prompt: string,
@@ -486,7 +505,7 @@ export async function runPipeline(
   transactionIds: string[],
   bppId?: string,
   bppUri?: string,
-): Promise<{ transaction_id: string; contract: ContractData }> {
+): Promise<PipelineResult> {
   const res = await fetch(`${API}/pipeline/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

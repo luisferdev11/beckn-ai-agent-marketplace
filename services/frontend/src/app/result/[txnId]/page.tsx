@@ -48,6 +48,44 @@ export default function ResultPage({ params }: ResultPageProps) {
   }, [txnId]);
 
   useEffect(() => {
+    // Check for pipeline result in sessionStorage (no polling needed)
+    try {
+      const pipelineData = sessionStorage.getItem(`beckn_pipeline_${txnId}`);
+      if (pipelineData) {
+        const pipeline = JSON.parse(pipelineData);
+        const pipelinePerf: PerformanceAttributes = {
+          '@type': 'beckn:PipelineExecution',
+          '@context': '',
+          status: pipeline.status,
+          model: 'pipeline',
+          latencyMs: (pipeline.steps || []).reduce((sum: number, s: { duration_ms?: number }) => sum + (s.duration_ms || 0), 0),
+          startedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          tokensUsed: { input: 0, output: 0, total: 0 },
+          result: pipeline.result || {},
+          pipeline_mode: true,
+          execution_summary: (pipeline.steps || []).map((s: { step_id: string; agent_name: string; status: string; duration_ms: number; error?: string }) => ({
+            step_id: s.step_id,
+            agent: s.agent_name,
+            status: s.status === 'COMPLETED' ? 'success' : s.status === 'SKIPPED' ? 'skipped' : 'failed',
+            attempts: 1,
+            note: s.error || undefined,
+          })),
+        };
+        setPerformance(pipelinePerf);
+        setSteps(prev => prev.map(s =>
+          s.id === 'execute' || s.id === 'status' ? { ...s, status: 'done', timestamp: new Date().toISOString() } : s
+        ));
+        setCompleted(true);
+        return;
+      }
+    } catch { /* fall through to polling */ }
+  }, [txnId]);
+
+  useEffect(() => {
+    // Skip polling if pipeline result was loaded from sessionStorage
+    if (completed) return;
+
     let stopped = false;
 
     const run = async () => {
