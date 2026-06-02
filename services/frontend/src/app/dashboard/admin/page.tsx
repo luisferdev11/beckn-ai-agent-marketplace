@@ -26,6 +26,10 @@ export default function AdminDashboard() {
   const [detail, setDetail] = useState<any | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState('');
+  // Tabs backed by the frontend's own DB (beckn_catalog) degrade gracefully
+  // when that DB is not provisioned in this environment — flagged here so
+  // the tab shows a notice instead of an empty table / console error.
+  const [unavailable, setUnavailable] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     const t = localStorage.getItem('token');
@@ -47,13 +51,28 @@ export default function AdminDashboard() {
   useEffect(() => {
     if (!token) return;
     const headers = { Authorization: `Bearer ${token}` };
-    Promise.all([
-      fetch('/api/admin/users', { headers }).then(r => r.json()),
-      fetch('/api/admin/providers', { headers }).then(r => r.json()),
-      fetch('/api/admin/agents', { headers }).then(r => r.json()),
-    ]).then(([u, p, a]) => {
-      setUsers(u); setProviders(p); setAgents(a);
-    });
+    // Each DB-backed list is loaded independently so one failing source
+    // (e.g. the beckn_catalog DB not provisioned locally) does not break
+    // the others or the page. A non-200 / non-array marks the tab as
+    // unavailable rather than throwing.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const loadList = async (key: string, url: string, set: (v: any[]) => void) => {
+      try {
+        const res = await fetch(url, { headers });
+        const data = res.ok ? await res.json() : null;
+        if (Array.isArray(data)) {
+          set(data);
+          setUnavailable(prev => ({ ...prev, [key]: false }));
+        } else {
+          setUnavailable(prev => ({ ...prev, [key]: true }));
+        }
+      } catch {
+        setUnavailable(prev => ({ ...prev, [key]: true }));
+      }
+    };
+    loadList('users', '/api/admin/users', setUsers);
+    loadList('providers', '/api/admin/providers', setProviders);
+    loadList('agents', '/api/admin/agents', setAgents);
     loadAdmissions();
   }, [token, loadAdmissions]);
 
@@ -159,6 +178,19 @@ export default function AdminDashboard() {
     </button>
   );
 
+  const unavailableNotice = (
+    <div style={{
+      padding: 32, textAlign: 'center', background: 'var(--bg-surface)',
+      border: '1px solid var(--border-subtle)', borderRadius: 8,
+      color: 'var(--text-tertiary)', fontSize: 13, fontFamily: 'var(--font-plex)',
+    }}>
+      Data source not available in this environment.
+      <div style={{ fontSize: 12, marginTop: 4 }}>
+        This tab reads the marketplace catalog DB, which isn&apos;t provisioned in this local setup.
+      </div>
+    </div>
+  );
+
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-content)' }}>
       {/* Header */}
@@ -200,7 +232,8 @@ export default function AdminDashboard() {
         </div>
 
         {/* Users tab */}
-        {tab === 'users' && (
+        {tab === 'users' && unavailable.users && unavailableNotice}
+        {tab === 'users' && !unavailable.users && (
           <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 8, overflow: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
@@ -243,7 +276,8 @@ export default function AdminDashboard() {
         )}
 
         {/* Providers tab */}
-        {tab === 'providers' && (
+        {tab === 'providers' && unavailable.providers && unavailableNotice}
+        {tab === 'providers' && !unavailable.providers && (
           <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 8, overflow: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
@@ -284,7 +318,8 @@ export default function AdminDashboard() {
         )}
 
         {/* Agents tab */}
-        {tab === 'agents' && (
+        {tab === 'agents' && unavailable.agents && unavailableNotice}
+        {tab === 'agents' && !unavailable.agents && (
           <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 8, overflow: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
