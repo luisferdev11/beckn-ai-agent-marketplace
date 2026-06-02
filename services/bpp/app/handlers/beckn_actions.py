@@ -333,11 +333,23 @@ async def handle_confirm(context: dict, message: dict) -> dict:
 
 
 async def _dispatch_to_orchestrator(txn_id: str, stored: dict) -> None:
-    """Fire-and-forget: call orchestrator /execute and store execution_id."""
+    """Fire-and-forget: call orchestrator /execute and store execution_id.
+
+    Detects pipeline_mode in performanceAttributes to decide between
+    orchestrator v1 (single-agent) and v2 (multi-agent pipeline).
+    """
     commitments = _parse_jsonb(stored.get("commitments", []))
     if not commitments:
         return
 
+    perf_attrs = commitments[0].get("performanceAttributes", {}) or {}
+
+    # ── Pipeline mode → orchestrator v2 ───────────────────────────────
+    if perf_attrs.get("pipeline_mode"):
+        await _dispatch_pipeline(txn_id, stored, perf_attrs)
+        return
+
+    # ── Single-agent mode → orchestrator v1 ───────────────────────────
     resources = commitments[0].get("resources", [])
     if not resources:
         return
@@ -352,7 +364,7 @@ async def _dispatch_to_orchestrator(txn_id: str, stored: dict) -> None:
         agent_url = agent.get("access_point_url") or agent_url
 
     # Extract prompt from multiple possible locations in the commitment
-    agent_input = commitments[0].get("performanceAttributes", {}) or {}
+    agent_input = perf_attrs
     resources = commitments[0].get("resources", [])
     if resources and not agent_input:
         desc = resources[0].get("descriptor", {})
@@ -377,8 +389,51 @@ async def _dispatch_to_orchestrator(txn_id: str, stored: dict) -> None:
         logger.error("dispatch: failed for txn %s: %s", txn_id[:8], exc)
 
 
+async def _dispatch_pipeline(txn_id: str, stored: dict, perf_attrs: dict) -> None:
+    """Enrich the pipeline plan with internal agent endpoints and dispatch to orchestrator v2."""
+    pipeline_plan = perf_attrs.get("pipeline_plan", {})
+    prompt = perf_attrs.get("prompt", "")
+    user_input = perf_attrs.get("user_input", {})
+
+    if not pipeline_plan:
+        logger.error("dispatch_pipeline: no pipeline_plan in perf_attrs [txn=%s]", txn_id[:8])
+        return
+
+    # Enrich agents and steps with internal endpoints.
+    # Priority: local DB (own agents) > provider_url from AgentFacts (cross-BPP).
+    agents_index = {a["agent_name"]: a for a in pipeline_plan.get("agents", [])}
+
+    for agent_def in pipeline_plan.get("agents", []):
+        agent_name = agent_def.get("agent_name", "")
+        agent = await repo.get_agent_by_beckn_id(agent_name)
+        if agent and agent.get("access_point_url"):
+            base_url = agent["access_point_url"]
+        elif agent_def.get("provider_url"):
+            base_url = agent_def["provider_url"]
+        else:
+            base_url = "http://agents:3004"
+        agent_def["endpoint"] = f"{base_url}/task?agent_id={agent_name}"
+
+    for step in pipeline_plan.get("steps", []):
+        agent_name = step.get("agent", "")
+        agent_def = agents_index.get(agent_name, {})
+        step["endpoint"] = agent_def.get("endpoint", f"http://agents:3004/task?agent_id={agent_name}")
+
+    try:
+        ack = await orchestrator_client.start_pipeline(
+            plan=pipeline_plan,
+            prompt=prompt,
+            data=user_input,
+        )
+        execution_id = ack.get("execution_id")
+        await repo.update_contract(txn_id, execution_id=execution_id)
+        logger.info("dispatch_pipeline: txn %s → pipeline execution %s", txn_id[:8], execution_id)
+    except Exception as exc:
+        logger.error("dispatch_pipeline: failed for txn %s: %s", txn_id[:8], exc)
+
+
 async def handle_status(context: dict, message: dict) -> dict:
-    """Handle status: polls orchestrator for execution state."""
+    """Handle status: polls orchestrator (v1 or v2) for execution state."""
     contract = message.get("contract", {})
     txn_id = context["transactionId"]
 
@@ -387,35 +442,80 @@ async def handle_status(context: dict, message: dict) -> dict:
         logger.warning(f"status: txn unknown to this BPP, rejecting [txn={txn_id[:8]}]")
         return _txn_not_found_response(context, "status")
 
+    # Detect pipeline mode from stored commitments
+    stored_commitments = _parse_jsonb(stored.get("commitments", []))
+    is_pipeline = False
+    if stored_commitments:
+        pa = stored_commitments[0].get("performanceAttributes", {}) or {}
+        is_pipeline = bool(pa.get("pipeline_mode"))
+
     exec_status = "PENDING"
     short_desc = "Execution pending"
     result: dict = {}
     metadata: dict = {}
+    execution_summary: list = []
 
     execution_id = stored.get("execution_id")
     if execution_id:
         try:
-            exec_data = await orchestrator_client.get_execution(execution_id)
-            exec_status = exec_data.get("status", "PENDING")
-            result = exec_data.get("result") or {}
-            metadata = exec_data.get("metadata") or {}
-            error = exec_data.get("error")
-            if exec_status == "COMPLETED":
-                short_desc = result.get("review") or result.get("summary") or str(result)
-                await repo.update_contract(txn_id,
-                    status="COMPLETED",
-                    completed_at=datetime.now(timezone.utc),
-                )
-            elif exec_status == "FAILED":
-                short_desc = error or "Agent execution failed"
-                await repo.update_contract(txn_id, status="FAILED")
+            if is_pipeline:
+                exec_data = await orchestrator_client.get_pipeline_execution(execution_id)
+                exec_status = exec_data.get("status", "PENDING")
+                result = exec_data.get("result") or {}
+                execution_summary = exec_data.get("execution_summary", [])
+                goal = exec_data.get("goal", "")
+                if exec_status == "COMPLETED":
+                    short_desc = goal or str(result)[:200]
+                    await repo.update_contract(txn_id,
+                        status="COMPLETED",
+                        completed_at=datetime.now(timezone.utc),
+                    )
+                elif exec_status == "PARTIAL":
+                    short_desc = f"Pipeline partially completed: {goal}"
+                    await repo.update_contract(txn_id, status="COMPLETED")
+                elif exec_status == "FAILED":
+                    short_desc = f"Pipeline failed: {goal}"
+                    await repo.update_contract(txn_id, status="FAILED")
+                else:
+                    short_desc = f"Pipeline {exec_status.lower()}: {goal}"
             else:
-                short_desc = f"Execution {exec_status.lower()}"
+                exec_data = await orchestrator_client.get_execution(execution_id)
+                exec_status = exec_data.get("status", "PENDING")
+                result = exec_data.get("result") or {}
+                metadata = exec_data.get("metadata") or {}
+                error = exec_data.get("error")
+                if exec_status == "COMPLETED":
+                    short_desc = result.get("review") or result.get("summary") or str(result)
+                    await repo.update_contract(txn_id,
+                        status="COMPLETED",
+                        completed_at=datetime.now(timezone.utc),
+                    )
+                elif exec_status == "FAILED":
+                    short_desc = error or "Agent execution failed"
+                    await repo.update_contract(txn_id, status="FAILED")
+                else:
+                    short_desc = f"Execution {exec_status.lower()}"
         except Exception as exc:
             logger.error("status: failed to poll orchestrator: %s", exc)
             short_desc = "Could not retrieve execution status"
 
     schema_url = "https://raw.githubusercontent.com/danielctecla/beckn-ai-agent-marketplace/main/schemas/execution-result-v1.json"
+    perf_attributes: dict = {
+        "@context": schema_url,
+        "@type": "beckn:AgentExecution",
+        "startedAt": metadata.get("started_at") or _now_iso(),
+        "completedAt": metadata.get("completed_at") or _now_iso(),
+        "latencyMs": metadata.get("latency_ms") or 0,
+        "tokensUsed": metadata.get("tokens_used") or {"input": 0, "output": 0, "total": 0},
+        "model": metadata.get("model") or "unknown",
+        "result": result,
+        "status": exec_status,
+    }
+
+    if is_pipeline:
+        perf_attributes["pipeline_mode"] = True
+        perf_attributes["execution_summary"] = execution_summary
+
     performance = [{
         "id": "perf-001",
         "status": {
@@ -423,20 +523,9 @@ async def handle_status(context: dict, message: dict) -> dict:
             "name": exec_status.replace("_", " ").title(),
             "shortDesc": short_desc[:500] if short_desc else "",
         },
-        "performanceAttributes": {
-            "@context": schema_url,
-            "@type": "beckn:AgentExecution",
-            "startedAt": metadata.get("started_at") or _now_iso(),
-            "completedAt": metadata.get("completed_at") or _now_iso(),
-            "latencyMs": metadata.get("latency_ms") or 0,
-            "tokensUsed": metadata.get("tokens_used") or {"input": 0, "output": 0, "total": 0},
-            "model": metadata.get("model") or "unknown",
-            "result": result,
-            "status": exec_status,
-        },
+        "performanceAttributes": perf_attributes,
     }]
 
-    stored_commitments = _parse_jsonb(stored["commitments"])
     commitments = stored_commitments or contract.get("commitments", [])
     if not commitments:
         commitments = [{"id": "commitment-001", "status": {"code": "ACTIVE"},

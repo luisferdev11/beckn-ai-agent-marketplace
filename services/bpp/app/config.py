@@ -16,6 +16,9 @@ BPP_CALLBACK_URL = os.getenv("BPP_CALLBACK_URL", "http://onix-bpp:8082/bpp/calle
 # URL of the orchestrator service — where we delegate agent execution
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:3003")
 
+# URL of orchestrator v2 — multi-agent pipeline execution
+ORCHESTRATOR2_URL = os.getenv("ORCHESTRATOR2_URL", "http://orchestrator2:3008")
+
 # URL of the marketplace CDS — where we POST rating ingest events so the
 # discover quality component reflects new ratings without us writing
 # directly to the CDS database (deliberate separation of concerns).
