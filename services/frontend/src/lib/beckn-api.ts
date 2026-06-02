@@ -111,6 +111,8 @@ export interface PerformanceAttributes {
   completedAt: string;
   tokensUsed: { input: number; output: number; total: number };
   result: Record<string, unknown>;
+  pipeline_mode?: boolean;
+  execution_summary?: { step_id: string; agent: string; status: string; attempts: number; note?: string }[];
 }
 
 interface Settlement {
@@ -442,7 +444,7 @@ export async function rateContract(
  * planner reported a soft failure (e.g. no candidates for some skill) —
  * we surface that as a thrown error too so the UI's error path handles it.
  */
-export async function plan(prompt: string): Promise<Plan> {
+export async function plan(prompt: string): Promise<PlanResponse & { plan: Plan }> {
   const res = await fetch(`${API}/plan`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -467,7 +469,46 @@ export async function plan(prompt: string): Promise<Plan> {
   if (!data.plan) {
     throw new Error(data.error || 'Planner returned no plan');
   }
-  return data.plan;
+  return data as PlanResponse & { plan: Plan };
+}
+
+/**
+ * Execute a multi-agent pipeline through one Beckn v2 contract.
+ *
+ * Calls BAP /api/pipeline/run which internally runs the full Beckn
+ * lifecycle (select → init → confirm) with the pipeline plan embedded.
+ * Returns the transaction_id so the caller can poll /api/contracts/status.
+ */
+export async function runPipeline(
+  pipelinePlan: Plan,
+  prompt: string,
+  userInput: Record<string, string>,
+  transactionIds: string[],
+  bppId?: string,
+  bppUri?: string,
+): Promise<{ transaction_id: string; contract: ContractData }> {
+  const res = await fetch(`${API}/pipeline/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      plan: pipelinePlan,
+      prompt,
+      user_input: userInput,
+      transaction_ids: transactionIds,
+      bpp_id: bppId ?? null,
+      bpp_uri: bppUri ?? null,
+    }),
+  });
+  if (!res.ok) {
+    let detail = `Pipeline run failed (${res.status})`;
+    try {
+      const body = await res.json();
+      if (typeof body?.detail === 'string') detail = body.detail;
+      else if (body?.detail) detail = JSON.stringify(body.detail);
+    } catch { /* use status-code message */ }
+    throw new Error(detail);
+  }
+  return res.json();
 }
 
 export { iconForAgent };
