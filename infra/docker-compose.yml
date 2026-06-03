@@ -400,7 +400,8 @@ services:
     build:
       context: ..
       dockerfile: services/orchestrator2/Dockerfile
-    network_mode: host
+    ports:
+      - "3008:3008"
     environment:
       - PORT=3008
       - SERVICE_NAME=orchestrator2
@@ -412,6 +413,8 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+    networks:
+      - beckn_network
 
   # AGENTS — Agentes IA individuales. El orchestrator los invoca via POST /task.
   #

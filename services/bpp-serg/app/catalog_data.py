@@ -56,18 +56,18 @@ AGENTS = [
             "@type": "beckn:AIAgentService",
             "capabilities": ["document_summary", "text_summary"],
             "languages": ["en", "es"],
-            "inputSchema": {"accepts": ["text/plain"], "maxSize": "100KB"},
-            "outputSchema": {"returns": "text/plain"},
-            # Rigorous JSON Schema contracts (draft-2020-12) — required by
-            # the CDS under strict mode and used by the agent probe.
-            "inputSchemaContract": {
+            "inputSchema": {
                 "type": "object",
-                "properties": {"text": {"type": "string", "minLength": 1}},
+                "properties": {
+                    "text": {"type": "string", "minLength": 1},
+                },
                 "required": ["text"],
             },
-            "outputSchemaContract": {
+            "outputSchema": {
                 "type": "object",
-                "properties": {"summary": {"type": "string"}},
+                "properties": {
+                    "summary": {"type": "string"},
+                },
                 "required": ["summary"],
             },
             "pricing": {"model": "per_task", "currency": "MXN", "unitPrice": 5.00},
@@ -93,22 +93,14 @@ AGENTS = [
             "@type": "beckn:AIAgentService",
             "capabilities": ["data_extraction", "ner"],
             "languages": ["en", "es"],
-            # Schemas are real JSON Schema (draft-2020-12) so the
-            # marketplace can validate the agent's input/output without
-            # consulting the partner's docs. ``inputSchemaContract`` and
-            # ``outputSchemaContract`` are the rigorous declarations;
-            # the loose ``inputSchema`` / ``outputSchema`` block stays
-            # for back-compat with the existing AgentFacts shape.
-            "inputSchema": {"accepts": ["text/plain"], "maxSize": "100KB"},
-            "outputSchema": {"returns": "application/json"},
-            "inputSchemaContract": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "text": {"type": "string", "minLength": 1},
                 },
                 "required": ["text"],
             },
-            "outputSchemaContract": {
+            "outputSchema": {
                 "type": "object",
                 "properties": {
                     "organizations":         {"type": "array", "items": {"type": "string"}},
@@ -144,9 +136,7 @@ AGENTS = [
             "@type": "beckn:AIAgentService",
             "capabilities": ["code_review", "static_analysis"],
             "languages": ["en"],
-            "inputSchema": {"accepts": ["text/plain"], "maxSize": "200KB"},
-            "outputSchema": {"returns": "text/plain"},
-            "inputSchemaContract": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "code": {"type": "string", "minLength": 1},
@@ -154,7 +144,7 @@ AGENTS = [
                 },
                 "required": ["code"],
             },
-            "outputSchemaContract": {
+            "outputSchema": {
                 "type": "object",
                 "properties": {"review": {"type": "string"}},
                 "required": ["review"],
@@ -181,9 +171,7 @@ AGENTS = [
             "@type": "beckn:AIAgentService",
             "capabilities": ["translation"],
             "languages": ["en", "es", "fr", "pt"],
-            "inputSchema": {"accepts": ["text/plain"], "maxSize": "50KB"},
-            "outputSchema": {"returns": "text/plain"},
-            "inputSchemaContract": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "text": {"type": "string", "minLength": 1},
@@ -191,7 +179,7 @@ AGENTS = [
                 },
                 "required": ["text", "target_lang"],
             },
-            "outputSchemaContract": {
+            "outputSchema": {
                 "type": "object",
                 "properties": {"translation": {"type": "string"}},
                 "required": ["translation"],
@@ -218,9 +206,7 @@ AGENTS = [
             "@type": "beckn:AIAgentService",
             "capabilities": ["text_generation", "email_drafting"],
             "languages": ["en", "es"],
-            "inputSchema": {"accepts": ["text/plain"], "maxSize": "20KB"},
-            "outputSchema": {"returns": "text/plain"},
-            "inputSchemaContract": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "brief": {"type": "string", "minLength": 1},
@@ -228,7 +214,7 @@ AGENTS = [
                 },
                 "required": ["brief"],
             },
-            "outputSchemaContract": {
+            "outputSchema": {
                 "type": "object",
                 "properties": {"email": {"type": "string"}},
                 "required": ["email"],
@@ -255,14 +241,12 @@ AGENTS = [
             "@type": "beckn:AIAgentService",
             "capabilities": ["sentiment_analysis", "classification"],
             "languages": ["en", "es"],
-            "inputSchema": {"accepts": ["text/plain"], "maxSize": "20KB"},
-            "outputSchema": {"returns": "application/json"},
-            "inputSchemaContract": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {"text": {"type": "string", "minLength": 1}},
                 "required": ["text"],
             },
-            "outputSchemaContract": {
+            "outputSchema": {
                 "type": "object",
                 "properties": {
                     "label": {"type": "string",

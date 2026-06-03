@@ -59,7 +59,9 @@ _HANDLERS = {
     # outputSchema {summary, key_points, language} actually matches
     # the runtime output.
     "agent-summarizer-001": run_summarization,
-    "agent-data-extractor-001": run_code_review,
+    # agent-data-extractor-001: no real extraction handler in this service.
+    # Falls back to _DEFAULT_HANDLER (text_generation) which will attempt
+    # a best-effort response. The real extractor lives in agents-serg:3006.
     "text-generator": run_text_generation,
 }
 

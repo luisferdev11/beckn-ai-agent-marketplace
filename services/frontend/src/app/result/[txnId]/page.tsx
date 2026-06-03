@@ -48,10 +48,48 @@ export default function ResultPage({ params }: ResultPageProps) {
   }, [txnId]);
 
   useEffect(() => {
+    // Check for pipeline result in sessionStorage (no polling needed)
+    try {
+      const pipelineData = sessionStorage.getItem(`beckn_pipeline_${txnId}`);
+      if (pipelineData) {
+        const pipeline = JSON.parse(pipelineData);
+        const pipelinePerf: PerformanceAttributes = {
+          '@type': 'beckn:PipelineExecution',
+          '@context': '',
+          status: pipeline.status,
+          model: 'pipeline',
+          latencyMs: (pipeline.steps || []).reduce((sum: number, s: { duration_ms?: number }) => sum + (s.duration_ms || 0), 0),
+          startedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          tokensUsed: { input: 0, output: 0, total: 0 },
+          result: pipeline.result || {},
+          pipeline_mode: true,
+          execution_summary: (pipeline.steps || []).map((s: { step_id: string; agent_name: string; status: string; duration_ms: number; error?: string }) => ({
+            step_id: s.step_id,
+            agent: s.agent_name,
+            status: s.status === 'COMPLETED' ? 'success' : s.status === 'SKIPPED' ? 'skipped' : 'failed',
+            attempts: 1,
+            note: s.error || undefined,
+          })),
+        };
+        setPerformance(pipelinePerf);
+        setSteps(prev => prev.map(s =>
+          s.id === 'execute' || s.id === 'status' ? { ...s, status: 'done', timestamp: new Date().toISOString() } : s
+        ));
+        setCompleted(true);
+        return;
+      }
+    } catch { /* fall through to polling */ }
+  }, [txnId]);
+
+  useEffect(() => {
+    // Skip polling if pipeline result was loaded from sessionStorage
+    if (completed) return;
+
     let stopped = false;
 
     const run = async () => {
-      const maxAttempts = 40; // ~2 minutes (3s intervals)
+      const maxAttempts = 60; // ~3 minutes (3s intervals) — pipelines may take longer
       for (let i = 0; i < maxAttempts && !stopped; i++) {
         try {
           // Each call triggers a fresh status request and waits for the on_status callback
@@ -60,7 +98,7 @@ export default function ResultPage({ params }: ResultPageProps) {
           const pa = perf?.performanceAttributes;
           const statusCode = pa?.status || perf?.status?.code;
 
-          if (statusCode === 'COMPLETED' && pa) {
+          if ((statusCode === 'COMPLETED' || statusCode === 'PARTIAL') && pa) {
             setPerformance(pa);
             setSteps(prev => prev.map(s =>
               s.id === 'execute' ? { ...s, status: 'done', timestamp: pa.completedAt } :
@@ -300,9 +338,48 @@ export default function ResultPage({ params }: ResultPageProps) {
                 ))}
               </div>
 
+              {/* Pipeline execution summary */}
+              {performance.pipeline_mode && performance.execution_summary && (
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ fontSize: 11, letterSpacing: '0.08em', fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)', fontWeight: 700, marginBottom: 10 }}>
+                    PIPELINE STEPS
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {(performance.execution_summary as { step_id: string; agent: string; status: string; attempts: number; note?: string }[]).map((step) => (
+                      <div key={step.step_id} style={{
+                        display: 'flex', alignItems: 'center', gap: 12,
+                        padding: '10px 14px', background: 'var(--infosys-cobalt-light)',
+                        borderRadius: 10, border: '1px solid rgba(0,124,195,0.08)',
+                      }}>
+                        <div style={{
+                          width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                          background: step.status === 'success' ? 'var(--trust-high)'
+                            : step.status === 'failed' ? 'var(--trust-low)'
+                            : step.status === 'skipped' ? 'var(--text-tertiary)'
+                            : 'var(--accent)',
+                        }} />
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 13, fontFamily: 'var(--font-plex)', fontWeight: 600, color: 'var(--text-primary)' }}>
+                            {step.step_id}: {step.agent}
+                          </div>
+                          {step.note && (
+                            <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)', marginTop: 2 }}>
+                              {step.note}
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
+                          {step.status} ({step.attempts} attempt{step.attempts !== 1 ? 's' : ''})
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Result content */}
               <div style={{ fontSize: 11, letterSpacing: '0.08em', fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)', fontWeight: 700, marginBottom: 10 }}>
-                RESULT
+                {performance.pipeline_mode ? 'PIPELINE OUTPUT' : 'RESULT'}
               </div>
 
               {performance.result?.text ? (

@@ -2,7 +2,8 @@
 
 import { useState, useMemo, useRef, useEffect } from 'react';
 import type { ReactNode } from 'react';
-import { discover, plan as planWorkflow } from '@/lib/beckn-api';
+import { useRouter } from 'next/navigation';
+import { discover, plan as planWorkflow, runPipeline } from '@/lib/beckn-api';
 import type { DiscoveredAgent, Plan, PlanStep } from '@/lib/beckn-api';
 import { AgentCard } from './AgentCard';
 import { FilterPanel } from './FilterPanel';
@@ -97,6 +98,7 @@ function languagesOf(agent: DiscoveredAgent): string[] {
  * the search logic (which is exactly how the two drifted apart before).
  */
 export function AgentDiscovery({ header }: { header?: ReactNode }) {
+  const router = useRouter();
   const [mode, setMode] = useState<Mode>('browse');
   const [query, setQuery] = useState('');
   const [hasSearched, setHasSearched] = useState(false);
@@ -107,6 +109,8 @@ export function AgentDiscovery({ header }: { header?: ReactNode }) {
   const [selectedAgent, setSelectedAgent] = useState<DiscoveredAgent | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [planResult, setPlanResult] = useState<Plan | null>(null);
+  const [planTxnIds, setPlanTxnIds] = useState<string[]>([]);
+  const [pipelineRunning, setPipelineRunning] = useState(false);
   const resultsRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -138,7 +142,8 @@ export function AgentDiscovery({ header }: { header?: ReactNode }) {
     try {
       if (mode === 'planner') {
         const result = await planWorkflow(query);
-        setPlanResult(result);
+        setPlanResult(result.plan);
+        setPlanTxnIds(result.transaction_ids);
       } else {
         const results = await discover(query);
         setAgents(results);
@@ -153,10 +158,33 @@ export function AgentDiscovery({ header }: { header?: ReactNode }) {
     }
   }
 
-  function handleRunPipeline() {
-    // Stub: pipeline execution wiring (select → init → confirm → status per step)
-    // lands in a follow-up iteration. For now the planner output is read-only.
-    alert('Pipeline execution coming soon — the plan is read-only for this iteration.');
+  async function handleRunPipeline() {
+    if (!planResult || !query.trim()) return;
+    setPipelineRunning(true);
+    setError(null);
+    try {
+      // Send the raw query as pipeline input under a "text" key.
+      // Future iteration: show a form for structured fields based on input_mapping.
+      const userInput: Record<string, string> = { text: query.trim() };
+      const result = await runPipeline(planResult, query.trim(), userInput, planTxnIds);
+
+      // Store pipeline result in sessionStorage for the result page
+      sessionStorage.setItem(`beckn_pipeline_${result.pipeline_id}`, JSON.stringify(result));
+      sessionStorage.setItem(`beckn_agent_${result.pipeline_id}`, JSON.stringify({
+        id: 'pipeline',
+        name: planResult.summary || 'Multi-Agent Pipeline',
+        icon: '\u{1F517}',
+        provider: `${planResult.steps.length} agents`,
+        pipeline_mode: true,
+      }));
+
+      router.push(`/result/${result.pipeline_id}`);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Pipeline execution failed';
+      setError(message);
+    } finally {
+      setPipelineRunning(false);
+    }
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -505,7 +533,7 @@ export function AgentDiscovery({ header }: { header?: ReactNode }) {
               ) : error ? (
                 <ErrorState message={error} onRetry={handleSearch} />
               ) : planResult ? (
-                <PlanResults plan={planResult} onRun={handleRunPipeline} />
+                <PlanResults plan={planResult} onRun={handleRunPipeline} running={pipelineRunning} />
               ) : (
                 <PlanEmptyState />
               )
@@ -725,7 +753,7 @@ function EmptyState({ onClear }: { onClear: () => void }) {
 
 // ── Planner result components ──────────────────────────────
 
-function PlanResults({ plan, onRun }: { plan: Plan; onRun: () => void }) {
+function PlanResults({ plan, onRun, running }: { plan: Plan; onRun: () => void; running?: boolean }) {
   const totalSeconds = (plan.estimates.max_latency_ms / 1000).toFixed(plan.estimates.max_latency_ms < 10000 ? 1 : 0);
   return (
     <div style={{ animation: 'fadeInUp 0.4s ease-out both' }}>
@@ -781,7 +809,7 @@ function PlanResults({ plan, onRun }: { plan: Plan; onRun: () => void }) {
         ))}
       </div>
 
-      {/* Run pipeline (stub) */}
+      {/* Run pipeline */}
       <div style={{
         marginTop: 28,
         display: 'flex', justifyContent: 'center',
@@ -789,26 +817,30 @@ function PlanResults({ plan, onRun }: { plan: Plan; onRun: () => void }) {
       }}>
         <button
           onClick={onRun}
+          disabled={running}
           style={{
             display: 'flex', alignItems: 'center', gap: 10,
             padding: '12px 28px', borderRadius: 8,
-            background: 'var(--infosys-cobalt)', color: '#fff', border: 'none',
+            background: running ? 'var(--text-tertiary)' : 'var(--infosys-cobalt)', color: '#fff', border: 'none',
             fontFamily: 'var(--font-plex)', fontSize: 14, fontWeight: 600,
-            cursor: 'pointer', transition: 'all 0.15s',
+            cursor: running ? 'wait' : 'pointer', transition: 'all 0.15s',
             boxShadow: '0 4px 16px rgba(0,124,195,0.35)',
+            opacity: running ? 0.7 : 1,
           }}
           onMouseEnter={e => {
+            if (running) return;
             const el = e.currentTarget as HTMLElement;
             el.style.background = 'var(--infosys-cobalt-dark)';
             el.style.transform = 'translateY(-1px)';
           }}
           onMouseLeave={e => {
+            if (running) return;
             const el = e.currentTarget as HTMLElement;
             el.style.background = 'var(--infosys-cobalt)';
             el.style.transform = 'translateY(0)';
           }}
         >
-          Run pipeline
+          {running ? 'Running pipeline...' : 'Run pipeline'}
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
             <path d="M2 7h10M12 7l-4-4M12 7l-4 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
