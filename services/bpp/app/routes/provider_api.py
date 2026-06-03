@@ -182,6 +182,34 @@ def _agent_to_beckn_resource(agent: dict) -> dict:
 
     schema_url = "https://raw.githubusercontent.com/danielctecla/beckn-ai-agent-marketplace/main/schemas/agentfacts-v1.json"
 
+    resource_attributes = {
+        "@context": schema_url,
+        "@type": "beckn:AIAgentService",
+        "id": agent.get("agentfacts_id") or f"marketplace:agent-{agent['id']}",
+        "agent_name": agent.get("agent_urn") or f"urn:agent:marketplace:{label.replace(' ', '')}",
+        "label": label,
+        "description": agent.get("description") or "",
+        "version": agent.get("version", "1.0.0"),
+        "jurisdiction": agent.get("jurisdiction"),
+        "provider": {
+            "name": provider_org.get("name", ""),
+            "url": agent.get("access_point_url", ""),
+        },
+        "endpoints": endpoints,
+        "capabilities": caps,
+        "skills": skills,
+        "inputSchema": input_schema,
+        "outputSchema": output_schema,
+        "modelProvider": agent.get("model_provider"),
+        "sla": sla,
+        "pricing": pricing,
+    }
+    # AgentFacts v1 declares modelProvider as a string with
+    # additionalProperties:false — a null value fails validation and the
+    # CDS rejects the whole item. Omit it when the agent has none.
+    if not resource_attributes.get("modelProvider"):
+        resource_attributes.pop("modelProvider", None)
+
     return {
         "id": agent["beckn_id"] or str(agent["id"]),
         "descriptor": {
@@ -189,28 +217,7 @@ def _agent_to_beckn_resource(agent: dict) -> dict:
             "shortDesc": (agent.get("description") or "")[:200],
             "longDesc": agent.get("description") or "",
         },
-        "resourceAttributes": {
-            "@context": schema_url,
-            "@type": "beckn:AIAgentService",
-            "id": agent.get("agentfacts_id") or f"marketplace:agent-{agent['id']}",
-            "agent_name": agent.get("agent_urn") or f"urn:agent:marketplace:{label.replace(' ', '')}",
-            "label": label,
-            "description": agent.get("description") or "",
-            "version": agent.get("version", "1.0.0"),
-            "jurisdiction": agent.get("jurisdiction"),
-            "provider": {
-                "name": provider_org.get("name", ""),
-                "url": agent.get("access_point_url", ""),
-            },
-            "endpoints": endpoints,
-            "capabilities": caps,
-            "skills": skills,
-            "inputSchema": input_schema,
-            "outputSchema": output_schema,
-            "modelProvider": agent.get("model_provider"),
-            "sla": sla,
-            "pricing": pricing,
-        },
+        "resourceAttributes": resource_attributes,
     }
 
 

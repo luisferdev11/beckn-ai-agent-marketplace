@@ -124,8 +124,8 @@ STEP_SUMMARIZE = StepSpec(
 )
 
 # Step 2 — Serg structured extractor (Mexico). Schemas mirror the
-# ``inputSchemaContract`` and ``outputSchemaContract`` advertised on
-# the Serg in-memory catalog (services/bpp-serg/app/catalog_data.py).
+# ``inputSchema`` and ``outputSchema`` advertised on the Serg
+# in-memory catalog (services/bpp-serg/app/catalog_data.py).
 STEP_EXTRACT = StepSpec(
     step_id="s2",
     skill_id="entity_extraction",

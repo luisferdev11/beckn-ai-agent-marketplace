@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { SessionDropdown } from '../../_components/shared/SessionDropdown';
+import { ConformanceReport } from '../../_components/dashboard/ConformanceReport';
 
-type Tab = 'users' | 'providers' | 'agents';
+type Tab = 'users' | 'providers' | 'agents' | 'admissions';
 
 interface User { id: string; email: string; role: string; company_name?: string }
 
@@ -19,6 +20,16 @@ export default function AdminDashboard() {
   const [providers, setProviders] = useState<any[]>([]);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [agents, setAgents] = useState<any[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [admissions, setAdmissions] = useState<any[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [detail, setDetail] = useState<any | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState('');
+  // Tabs backed by the frontend's own DB (beckn_catalog) degrade gracefully
+  // when that DB is not provisioned in this environment — flagged here so
+  // the tab shows a notice instead of an empty table / console error.
+  const [unavailable, setUnavailable] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     const t = localStorage.getItem('token');
@@ -31,17 +42,82 @@ export default function AdminDashboard() {
       .catch(() => router.push('/login'));
   }, [router]);
 
+  const loadAdmissions = useCallback(async () => {
+    if (!token) return;
+    const res = await fetch('/api/admin/admission', { headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) setAdmissions(await res.json());
+  }, [token]);
+
   useEffect(() => {
     if (!token) return;
     const headers = { Authorization: `Bearer ${token}` };
-    Promise.all([
-      fetch('/api/admin/users', { headers }).then(r => r.json()),
-      fetch('/api/admin/providers', { headers }).then(r => r.json()),
-      fetch('/api/admin/agents', { headers }).then(r => r.json()),
-    ]).then(([u, p, a]) => {
-      setUsers(u); setProviders(p); setAgents(a);
+    // Each DB-backed list is loaded independently so one failing source
+    // (e.g. the beckn_catalog DB not provisioned locally) does not break
+    // the others or the page. A non-200 / non-array marks the tab as
+    // unavailable rather than throwing.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const loadList = async (key: string, url: string, set: (v: any[]) => void) => {
+      try {
+        const res = await fetch(url, { headers });
+        const data = res.ok ? await res.json() : null;
+        if (Array.isArray(data)) {
+          set(data);
+          setUnavailable(prev => ({ ...prev, [key]: false }));
+        } else {
+          setUnavailable(prev => ({ ...prev, [key]: true }));
+        }
+      } catch {
+        setUnavailable(prev => ({ ...prev, [key]: true }));
+      }
+    };
+    loadList('users', '/api/admin/users', setUsers);
+    loadList('providers', '/api/admin/providers', setProviders);
+    loadList('agents', '/api/admin/agents', setAgents);
+    loadAdmissions();
+  }, [token, loadAdmissions]);
+
+  async function openDetail(id: number) {
+    setActionError('');
+    const res = await fetch(`/api/admin/admission/${id}`, { headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) setDetail(await res.json());
+  }
+
+  async function approveAdmission(id: number) {
+    setBusy(true); setActionError('');
+    const res = await fetch(`/api/admin/admission/${id}/approve`, {
+      method: 'POST', headers: { Authorization: `Bearer ${token}` },
     });
-  }, [token]);
+    setBusy(false);
+    if (res.ok) {
+      setDetail(null); await loadAdmissions();
+    } else {
+      const d = await res.json().catch(() => ({}));
+      setActionError(d?.detail?.message || d?.error || `Approve failed (${res.status})`);
+    }
+  }
+
+  async function rejectAdmission(id: number) {
+    const reason = window.prompt('Reason for rejection?');
+    if (!reason) return;
+    setBusy(true); setActionError('');
+    const res = await fetch(`/api/admin/admission/${id}/reject`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ reason }),
+    });
+    setBusy(false);
+    if (res.ok) { setDetail(null); await loadAdmissions(); }
+    else setActionError(`Reject failed (${res.status})`);
+  }
+
+  async function retryConformance(id: number) {
+    setBusy(true); setActionError('');
+    await fetch(`/api/admin/admission/${id}/retry-conformance`, {
+      method: 'POST', headers: { Authorization: `Bearer ${token}` },
+    });
+    // The kit runs in the background; give it a moment then refetch detail.
+    setTimeout(async () => { await openDetail(id); setBusy(false); }, 6000);
+  }
 
   async function updateUser(id: string, field: string, value: string) {
     await fetch('/api/admin/users', {
@@ -102,6 +178,19 @@ export default function AdminDashboard() {
     </button>
   );
 
+  const unavailableNotice = (
+    <div style={{
+      padding: 32, textAlign: 'center', background: 'var(--bg-surface)',
+      border: '1px solid var(--border-subtle)', borderRadius: 8,
+      color: 'var(--text-tertiary)', fontSize: 13, fontFamily: 'var(--font-plex)',
+    }}>
+      Data source not available in this environment.
+      <div style={{ fontSize: 12, marginTop: 4 }}>
+        This tab reads the marketplace catalog DB, which isn&apos;t provisioned in this local setup.
+      </div>
+    </div>
+  );
+
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-content)' }}>
       {/* Header */}
@@ -129,10 +218,22 @@ export default function AdminDashboard() {
           <button onClick={() => setTab('users')} style={tabStyle('users')}>Users</button>
           <button onClick={() => setTab('providers')} style={tabStyle('providers')}>Companies</button>
           <button onClick={() => setTab('agents')} style={tabStyle('agents')}>Agents</button>
+          <button onClick={() => setTab('admissions')} style={tabStyle('admissions')}>
+            BPP Admissions
+            {admissions.filter(a => a.decision === 'pending').length > 0 && (
+              <span style={{
+                marginLeft: 6, padding: '1px 6px', borderRadius: 8, fontSize: 10, fontWeight: 700,
+                fontFamily: 'var(--font-mono)', background: 'var(--infosys-cobalt)', color: '#fff',
+              }}>
+                {admissions.filter(a => a.decision === 'pending').length}
+              </span>
+            )}
+          </button>
         </div>
 
         {/* Users tab */}
-        {tab === 'users' && (
+        {tab === 'users' && unavailable.users && unavailableNotice}
+        {tab === 'users' && !unavailable.users && (
           <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 8, overflow: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
@@ -175,7 +276,8 @@ export default function AdminDashboard() {
         )}
 
         {/* Providers tab */}
-        {tab === 'providers' && (
+        {tab === 'providers' && unavailable.providers && unavailableNotice}
+        {tab === 'providers' && !unavailable.providers && (
           <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 8, overflow: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
@@ -216,7 +318,8 @@ export default function AdminDashboard() {
         )}
 
         {/* Agents tab */}
-        {tab === 'agents' && (
+        {tab === 'agents' && unavailable.agents && unavailableNotice}
+        {tab === 'agents' && !unavailable.agents && (
           <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 8, overflow: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
@@ -255,7 +358,138 @@ export default function AdminDashboard() {
             </table>
           </div>
         )}
+
+        {/* BPP Admissions tab */}
+        {tab === 'admissions' && (
+          <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 8, overflow: 'auto' }}>
+            {admissions.length === 0 ? (
+              <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
+                No BPP admission requests yet.
+              </div>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ background: 'var(--bg-elevated)' }}>
+                    {['SUBSCRIBER', 'ORGANIZATION', 'JURISDICTION', 'REQUESTED', 'DECISION', 'ACTIONS'].map(h => (
+                      <th key={h} style={thStyle}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {admissions.map(a => (
+                    <tr key={a.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                      <td style={{ ...tdStyle, fontSize: 12, fontFamily: 'var(--font-mono)' }}>{a.subscriber_id}</td>
+                      <td style={{ ...tdStyle, fontWeight: 500 }}>{a.organization_data?.name || '—'}</td>
+                      <td style={tdStyle}>{a.organization_data?.jurisdiction || a.jurisdiction || '—'}</td>
+                      <td style={{ ...tdStyle, fontSize: 12, color: 'var(--text-tertiary)' }}>
+                        {a.requested_at ? new Date(a.requested_at).toLocaleString() : '—'}
+                      </td>
+                      <td style={tdStyle}>
+                        <span style={{
+                          padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+                          fontFamily: 'var(--font-mono)',
+                          background: a.decision === 'approved' ? 'rgba(0,135,90,0.08)' : a.decision === 'rejected' ? 'rgba(198,40,40,0.06)' : 'var(--bg-elevated)',
+                          color: a.decision === 'approved' ? 'var(--trust-high)' : a.decision === 'rejected' ? 'var(--trust-low)' : 'var(--text-secondary)',
+                        }}>
+                          {(a.decision || 'pending').toUpperCase()}
+                        </span>
+                      </td>
+                      <td style={tdStyle}>
+                        {actionBtn('var(--infosys-cobalt)', () => openDetail(a.id), 'Review')}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* Admission detail modal */}
+      {detail && (
+        <div
+          onClick={() => setDetail(null)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200,
+          }}
+        >
+          <div onClick={e => e.stopPropagation()} style={{
+            background: 'var(--bg-surface)', borderRadius: 10, border: '1px solid var(--border-subtle)',
+            padding: 28, width: '100%', maxWidth: 640, maxHeight: '90vh', overflowY: 'auto',
+            boxShadow: '0 8px 40px rgba(0,0,0,0.2)',
+          }}>
+            <h3 style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'var(--font-plex)', marginBottom: 4 }}>
+              {detail.organization_data?.name || detail.subscriber_id}
+            </h3>
+            <div style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)', marginBottom: 16 }}>
+              {detail.subscriber_id}
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 18, fontSize: 13, fontFamily: 'var(--font-plex)' }}>
+              <div><span style={{ color: 'var(--text-tertiary)' }}>Contact:</span> {detail.submitted_by_email || '—'}</div>
+              <div><span style={{ color: 'var(--text-tertiary)' }}>Subscriber status:</span> {detail.subscriber_status || '—'}</div>
+              <div><span style={{ color: 'var(--text-tertiary)' }}>Decision:</span> {detail.decision}</div>
+              <div><span style={{ color: 'var(--text-tertiary)' }}>Reviewed by:</span> {detail.reviewed_by || '—'}</div>
+            </div>
+
+            <h4 style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', fontFamily: 'var(--font-plex)', marginBottom: 8 }}>
+              Conformance report
+            </h4>
+            <ConformanceReport conformance={detail.latest_conformance} />
+
+            {actionError && (
+              <div style={{ marginTop: 14, padding: '8px 12px', borderRadius: 6, background: 'rgba(198,40,40,0.06)', border: '1px solid rgba(198,40,40,0.15)', color: 'var(--trust-low)', fontSize: 12 }}>
+                {actionError}
+              </div>
+            )}
+
+            {/* Actions */}
+            <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
+              <button onClick={() => setDetail(null)} style={{
+                padding: '9px 14px', borderRadius: 6, border: '1px solid var(--border-default)',
+                background: 'var(--bg-surface)', color: 'var(--text-secondary)', fontFamily: 'var(--font-plex)',
+                fontSize: 13, cursor: 'pointer',
+              }}>
+                Close
+              </button>
+              <div style={{ flex: 1 }} />
+              {detail.decision === 'pending' && (
+                <>
+                  <button onClick={() => retryConformance(detail.id)} disabled={busy} style={{
+                    padding: '9px 14px', borderRadius: 6, border: '1px solid var(--border-default)',
+                    background: 'var(--bg-surface)', color: 'var(--text-secondary)', fontFamily: 'var(--font-plex)',
+                    fontSize: 13, cursor: busy ? 'not-allowed' : 'pointer',
+                  }}>
+                    Re-run conformance
+                  </button>
+                  <button onClick={() => rejectAdmission(detail.id)} disabled={busy} style={{
+                    padding: '9px 14px', borderRadius: 6, border: '1px solid var(--trust-low)',
+                    background: 'transparent', color: 'var(--trust-low)', fontFamily: 'var(--font-plex)',
+                    fontSize: 13, fontWeight: 600, cursor: busy ? 'not-allowed' : 'pointer',
+                  }}>
+                    Reject
+                  </button>
+                  <button
+                    onClick={() => approveAdmission(detail.id)}
+                    disabled={busy || detail.latest_conformance?.must_passed !== true}
+                    title={detail.latest_conformance?.must_passed !== true ? 'Conformance must pass before approval' : ''}
+                    style={{
+                      padding: '9px 18px', borderRadius: 6, border: 'none',
+                      background: (busy || detail.latest_conformance?.must_passed !== true) ? 'var(--bg-elevated)' : 'var(--infosys-cobalt)',
+                      color: (busy || detail.latest_conformance?.must_passed !== true) ? 'var(--text-tertiary)' : '#fff',
+                      fontFamily: 'var(--font-plex)', fontSize: 13, fontWeight: 600,
+                      cursor: (busy || detail.latest_conformance?.must_passed !== true) ? 'not-allowed' : 'pointer',
+                    }}>
+                    {busy ? 'Working…' : 'Approve'}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
