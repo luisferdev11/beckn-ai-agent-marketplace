@@ -323,11 +323,11 @@ level**, named exactly `inputSchema` and `outputSchema`:
 ```
 
 > **Field naming:** the AgentFacts document you publish uses `inputSchema` /
-> `outputSchema`. Some internal demo code (`services/bap/app/demo/specs.py`)
-> refers to the same concept as `inputSchemaContract` / `outputSchemaContract`
-> — that is a BAP-side planner detail and is **not** a valid AgentFacts field.
-> Because AgentFacts v1 sets `additionalProperties: false`, publishing
-> `*Contract` keys will be rejected. Publish `inputSchema` / `outputSchema`.
+> `outputSchema` — these are the real JSON Schemas, declared directly at the
+> agent level (no separate `*Contract` field). `inputSchemaContract` /
+> `outputSchemaContract` are **not** valid AgentFacts fields: because
+> AgentFacts v1 sets `additionalProperties: false`, publishing `*Contract`
+> keys will be rejected. Publish `inputSchema` / `outputSchema`.
 
 **What the marketplace does with these:**
 
