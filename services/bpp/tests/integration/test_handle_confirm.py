@@ -81,7 +81,8 @@ class TestConfirmActivatesContract:
         mock_start, _ = mock_orchestrator
         mock_start.assert_called_once()
         call_args = mock_start.call_args[0][0]
-        assert call_args["agent_id"] == "agent-code-reviewer-001"
+        # Orchestrator2 payload: plan contains the agent in steps[0].agent
+        assert call_args["plan"]["steps"][0]["agent"] == "agent-code-reviewer-001"
 
     async def test_execution_id_stored_in_contract(self, client, mock_onix_bpp, mock_orchestrator, fake_db):
         txn_id = "txn-confirm-004"

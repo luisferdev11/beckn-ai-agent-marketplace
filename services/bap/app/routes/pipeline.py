@@ -241,6 +241,8 @@ async def _execute_step(
     step: dict,
     user_input: dict[str, Any],
     completed_outputs: dict[str, Any],
+    *,
+    pipeline_prompt: str = "",
 ) -> StepResult:
     """Run one step through the full Beckn lifecycle: select → init → confirm → status."""
     step_id = step["id"]
@@ -266,6 +268,13 @@ async def _execute_step(
 
     # ── Resolve input ─────────────────────────────────────────────────
     agent_input = _resolve_input(step, user_input, completed_outputs)
+
+    # Safety net: if resolution produced no prompt-like key, inject the
+    # pipeline-level prompt so agents always have something to work with.
+    _PROMPT_KEYS = {"prompt", "text", "code", "document"}
+    if pipeline_prompt and not (set(agent_input) & _PROMPT_KEYS):
+        agent_input["prompt"] = pipeline_prompt
+
     logger.info("pipeline[%s] resolved input: %s", step_id, json.dumps(agent_input, ensure_ascii=False)[:200])
 
     # ── SELECT ────────────────────────────────────────────────────────
@@ -313,10 +322,18 @@ async def _execute_step(
     last_id = on_init.get("id", 0)
 
     # ── CONFIRM ───────────────────────────────────────────────────────
+    # Enrich performanceAttributes so BPP can build a proper orchestrator2
+    # mini-plan with step context, schemas, and the original prompt.
     confirm_commitments = [{
         **commitments[0],
         "status": {"descriptor": {"code": "DRAFT"}},
-        "performanceAttributes": agent_input,
+        "performanceAttributes": {
+            "agent_input": agent_input,
+            "step_note": step.get("rationale", ""),
+            "prompt": pipeline_prompt,
+            "input_schema": step.get("input_schema"),
+            "output_schema": step.get("output_schema"),
+        },
     }]
 
     await _send_to_onix("confirm", {
@@ -395,7 +412,17 @@ async def run_pipeline(req: PipelineRunRequest):
         raise HTTPException(status_code=422, detail=f"Agents not found in catalog: {missing}")
 
     # ── 2. Build pipeline plan ────────────────────────────────────────
-    pipeline_plan = build_pipeline_plan(req.plan, agent_catalog, req.user_input)
+    # Enrich user_input so common $pipeline_input.* references always
+    # resolve regardless of which field name the planner LLM picks.
+    # Explicit user_input keys take precedence over these defaults.
+    enriched_input: dict[str, Any] = {
+        "prompt": req.prompt,
+        "text": req.prompt,
+        "document": req.prompt,
+    }
+    enriched_input.update(req.user_input)
+
+    pipeline_plan = build_pipeline_plan(req.plan, agent_catalog, enriched_input)
     steps_by_id = {s["id"]: s for s in pipeline_plan["steps"]}
     layers = pipeline_plan["execution_layers"]
 
@@ -425,7 +452,7 @@ async def run_pipeline(req: PipelineRunRequest):
         # Execute runnable steps in parallel
         if runnable:
             results = await asyncio.gather(*[
-                _execute_step(step, req.user_input, completed_outputs)
+                _execute_step(step, enriched_input, completed_outputs, pipeline_prompt=req.prompt)
                 for step in runnable
             ])
             for r in results:

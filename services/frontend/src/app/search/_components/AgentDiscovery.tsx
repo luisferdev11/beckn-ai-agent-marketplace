@@ -111,6 +111,7 @@ export function AgentDiscovery({ header }: { header?: ReactNode }) {
   const [planResult, setPlanResult] = useState<Plan | null>(null);
   const [planTxnIds, setPlanTxnIds] = useState<string[]>([]);
   const [pipelineRunning, setPipelineRunning] = useState(false);
+  const [pipelineInput, setPipelineInput] = useState<Record<string, string>>({});
   const resultsRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -163,9 +164,9 @@ export function AgentDiscovery({ header }: { header?: ReactNode }) {
     setPipelineRunning(true);
     setError(null);
     try {
-      // Send the raw query as pipeline input under a "text" key.
-      // Future iteration: show a form for structured fields based on input_mapping.
-      const userInput: Record<string, string> = { text: query.trim() };
+      // Use structured data from the pipeline input form.
+      // Keys match the input_mapping fields from layer-0 steps.
+      const userInput: Record<string, string> = { ...pipelineInput };
       const result = await runPipeline(planResult, query.trim(), userInput, planTxnIds);
 
       // Store pipeline result in sessionStorage for the result page
@@ -199,6 +200,7 @@ export function AgentDiscovery({ header }: { header?: ReactNode }) {
     setHasSearched(false);
     setAgents([]);
     setPlanResult(null);
+    setPipelineInput({});
     setError(null);
     setFilters(DEFAULT_FILTERS);
     setTimeout(() => inputRef.current?.focus(), 50);
@@ -533,7 +535,7 @@ export function AgentDiscovery({ header }: { header?: ReactNode }) {
               ) : error ? (
                 <ErrorState message={error} onRetry={handleSearch} />
               ) : planResult ? (
-                <PlanResults plan={planResult} onRun={handleRunPipeline} running={pipelineRunning} />
+                <PlanResults plan={planResult} onRun={handleRunPipeline} running={pipelineRunning} pipelineInput={pipelineInput} onInputChange={setPipelineInput} />
               ) : (
                 <PlanEmptyState />
               )
@@ -753,8 +755,34 @@ function EmptyState({ onClear }: { onClear: () => void }) {
 
 // ── Planner result components ──────────────────────────────
 
-function PlanResults({ plan, onRun, running }: { plan: Plan; onRun: () => void; running?: boolean }) {
+function PlanResults({ plan, onRun, running, pipelineInput, onInputChange }: {
+  plan: Plan;
+  onRun: () => void;
+  running?: boolean;
+  pipelineInput: Record<string, string>;
+  onInputChange: (input: Record<string, string>) => void;
+}) {
   const totalSeconds = (plan.estimates.max_latency_ms / 1000).toFixed(plan.estimates.max_latency_ms < 10000 ? 1 : 0);
+
+  // Derive required input fields from layer-0 steps (no dependencies).
+  // Each $pipeline_input.X reference means the user must provide field X.
+  const requiredFields = useMemo(() => {
+    const fields: { key: string; label: string; stepName: string }[] = [];
+    const seen = new Set<string>();
+    for (const step of plan.steps) {
+      if (step.depends_on.length > 0) continue;
+      for (const [key, source] of Object.entries(step.input_mapping)) {
+        if (typeof source === 'string' && source.startsWith('$pipeline_input.') && !seen.has(key)) {
+          seen.add(key);
+          fields.push({ key, label: key, stepName: step.recommended.name });
+        }
+      }
+    }
+    return fields;
+  }, [plan.steps]);
+
+  const hasInput = requiredFields.length === 0 || requiredFields.some(f => (pipelineInput[f.key] || '').trim().length > 0);
+
   return (
     <div style={{ animation: 'fadeInUp 0.4s ease-out both' }}>
       {/* Plan summary hero */}
@@ -809,6 +837,16 @@ function PlanResults({ plan, onRun, running }: { plan: Plan; onRun: () => void; 
         ))}
       </div>
 
+      {/* Data input form */}
+      {requiredFields.length > 0 && (
+        <PipelineDataForm
+          fields={requiredFields}
+          values={pipelineInput}
+          onChange={onInputChange}
+          disabled={!!running}
+        />
+      )}
+
       {/* Run pipeline */}
       <div style={{
         marginTop: 28,
@@ -817,35 +855,168 @@ function PlanResults({ plan, onRun, running }: { plan: Plan; onRun: () => void; 
       }}>
         <button
           onClick={onRun}
-          disabled={running}
+          disabled={running || !hasInput}
           style={{
             display: 'flex', alignItems: 'center', gap: 10,
             padding: '12px 28px', borderRadius: 8,
-            background: running ? 'var(--text-tertiary)' : 'var(--infosys-cobalt)', color: '#fff', border: 'none',
+            background: (running || !hasInput) ? 'var(--text-tertiary)' : 'var(--infosys-cobalt)', color: '#fff', border: 'none',
             fontFamily: 'var(--font-plex)', fontSize: 14, fontWeight: 600,
-            cursor: running ? 'wait' : 'pointer', transition: 'all 0.15s',
+            cursor: (running || !hasInput) ? 'not-allowed' : 'pointer', transition: 'all 0.15s',
             boxShadow: '0 4px 16px rgba(0,124,195,0.35)',
-            opacity: running ? 0.7 : 1,
+            opacity: (running || !hasInput) ? 0.7 : 1,
           }}
           onMouseEnter={e => {
-            if (running) return;
+            if (running || !hasInput) return;
             const el = e.currentTarget as HTMLElement;
             el.style.background = 'var(--infosys-cobalt-dark)';
             el.style.transform = 'translateY(-1px)';
           }}
           onMouseLeave={e => {
-            if (running) return;
+            if (running || !hasInput) return;
             const el = e.currentTarget as HTMLElement;
             el.style.background = 'var(--infosys-cobalt)';
             el.style.transform = 'translateY(0)';
           }}
         >
-          {running ? 'Running pipeline...' : 'Run pipeline'}
+          {running ? 'Running pipeline...' : hasInput ? 'Run pipeline' : 'Provide input data first'}
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
             <path d="M2 7h10M12 7l-4-4M12 7l-4 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </button>
       </div>
+    </div>
+  );
+}
+
+const FIELD_LABELS: Record<string, string> = {
+  document: 'Document content',
+  text: 'Text input',
+  code: 'Code',
+  prompt: 'Prompt',
+  language: 'Language',
+  context: 'Additional context',
+  format: 'Format',
+};
+
+const TEXT_FILE_EXTENSIONS = ['.txt', '.md', '.json', '.py', '.js', '.ts', '.jsx', '.tsx', '.html', '.css', '.csv', '.xml', '.yaml', '.yml', '.sql', '.sh', '.go', '.rs', '.java', '.c', '.cpp', '.h', '.rb', '.php', '.swift', '.kt'];
+
+function PipelineDataForm({ fields, values, onChange, disabled }: {
+  fields: { key: string; label: string; stepName: string }[];
+  values: Record<string, string>;
+  onChange: (v: Record<string, string>) => void;
+  disabled: boolean;
+}) {
+  function handleTextChange(key: string, text: string) {
+    onChange({ ...values, [key]: text });
+  }
+
+  function handleFileUpload(key: string, e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const content = reader.result as string;
+      onChange({ ...values, [key]: content });
+    };
+    reader.readAsText(file);
+  }
+
+  return (
+    <div style={{
+      marginTop: 28,
+      background: 'var(--bg-surface)',
+      border: '1px solid var(--border-subtle)',
+      borderLeft: '3px solid #E8A317',
+      borderRadius: 8,
+      padding: '20px 24px',
+      animation: 'fadeInUp 0.3s ease-out both',
+    }}>
+      <div style={{
+        display: 'inline-flex', alignItems: 'center', gap: 8,
+        padding: '3px 10px', borderRadius: 4,
+        background: 'rgba(232,163,23,0.1)',
+        border: '1px solid rgba(232,163,23,0.25)',
+        marginBottom: 14,
+      }}>
+        <span style={{
+          fontSize: 10, fontWeight: 700, color: '#B8860B',
+          letterSpacing: '0.08em', fontFamily: 'var(--font-mono)',
+        }}>
+          PIPELINE INPUT
+        </span>
+      </div>
+      <p style={{
+        fontSize: 13, color: 'var(--text-secondary)', fontFamily: 'var(--font-plex)',
+        marginBottom: 18, lineHeight: 1.5,
+      }}>
+        Provide the data for your pipeline. Paste text or upload a file.
+      </p>
+
+      {fields.map(field => (
+        <div key={field.key} style={{ marginBottom: 16 }}>
+          <label style={{
+            display: 'block', marginBottom: 6,
+            fontSize: 12, fontWeight: 600, color: 'var(--text-primary)',
+            fontFamily: 'var(--font-plex)', letterSpacing: '0.02em',
+          }}>
+            {FIELD_LABELS[field.key] || field.key}
+            <span style={{ fontWeight: 400, color: 'var(--text-tertiary)', marginLeft: 8, fontSize: 11 }}>
+              for {field.stepName}
+            </span>
+          </label>
+
+          <textarea
+            value={values[field.key] || ''}
+            onChange={e => handleTextChange(field.key, e.target.value)}
+            disabled={disabled}
+            placeholder={`Paste ${field.key} content here...`}
+            rows={6}
+            style={{
+              width: '100%', padding: '10px 12px', borderRadius: 6,
+              border: '1px solid var(--border-default)',
+              background: disabled ? 'var(--bg-elevated)' : 'var(--bg-surface)',
+              color: 'var(--text-primary)',
+              fontFamily: 'var(--font-mono)', fontSize: 13,
+              lineHeight: 1.55, resize: 'vertical',
+              outline: 'none',
+              transition: 'border-color 0.15s',
+              opacity: disabled ? 0.6 : 1,
+            }}
+            onFocus={e => { e.currentTarget.style.borderColor = 'var(--infosys-cobalt)'; }}
+            onBlur={e => { e.currentTarget.style.borderColor = 'var(--border-default)'; }}
+          />
+
+          <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 10 }}>
+            <label style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '5px 12px', borderRadius: 5,
+              background: 'var(--bg-elevated)',
+              border: '1px solid var(--border-subtle)',
+              color: 'var(--text-secondary)',
+              fontFamily: 'var(--font-plex)', fontSize: 12, fontWeight: 500,
+              cursor: disabled ? 'not-allowed' : 'pointer',
+              transition: 'all 0.15s',
+            }}>
+              <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+                <path d="M7 1v12M1 7h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+              Upload file
+              <input
+                type="file"
+                accept={TEXT_FILE_EXTENSIONS.join(',')}
+                onChange={e => handleFileUpload(field.key, e)}
+                disabled={disabled}
+                style={{ display: 'none' }}
+              />
+            </label>
+            {values[field.key] && (
+              <span style={{ fontSize: 11, color: 'var(--text-tertiary)', fontFamily: 'var(--font-mono)' }}>
+                {values[field.key].length.toLocaleString()} chars
+              </span>
+            )}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
