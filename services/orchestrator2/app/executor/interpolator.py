@@ -12,6 +12,10 @@ def _resolve_path(path: str, completed_steps: dict, data: dict) -> Any:
     """Resolve a dotted path like 'step1.translation' or 'input.review'."""
     parts = path.split(".", 1)
     if len(parts) < 2:
+        # No dot — might be a whole-step reference like "${step1}"
+        step_data = completed_steps.get(path)
+        if step_data is not None:
+            return step_data.output if hasattr(step_data, "output") else step_data.get("output")
         return f"${{{path}}}"
 
     source, field = parts

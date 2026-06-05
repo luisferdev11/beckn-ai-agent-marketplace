@@ -229,6 +229,45 @@ class GroqClient:
             "fix_instructions": f"Agent response does not match output schema: {vr.error_message}",
         }
 
+    # ── 4. RESHAPE_OUTPUT ────────────────────────────────────────────────
+
+    async def reshape_output(
+        self,
+        output_schema: dict,
+        agent_response: Any,
+        step_note: str,
+    ) -> dict | None:
+        """Ask the LLM to transform an agent's raw response to match the expected outputSchema.
+
+        Used as a last resort when the agent returns valid content but in the
+        wrong shape (e.g. {text: "..."} instead of {fields: {}, raw_text: ""}).
+        Returns the reshaped dict, or None on failure.
+        """
+        system = (
+            "You are a data transformer. An AI agent produced a valid response but "
+            "in a different structure than expected. Your job is to reshape the agent's "
+            "response to match the target output_schema.\n\n"
+            "Rules:\n"
+            "- Extract all relevant information from the agent_response\n"
+            "- Map it to the fields defined in output_schema\n"
+            "- All required fields in output_schema MUST be present\n"
+            "- Preserve the actual content, just restructure it\n"
+            "- If the agent returned free text, parse it intelligently to fill structured fields\n"
+            "- Return ONLY the reshaped JSON object. No wrapping, no explanation."
+        )
+        user_msg = json.dumps({
+            "output_schema": output_schema,
+            "agent_response": agent_response,
+            "step_note": step_note,
+        }, ensure_ascii=False)
+
+        try:
+            result = await self._call(system, user_msg, label="RESHAPE_OUTPUT")
+            return result if isinstance(result, dict) else None
+        except RuntimeError:
+            logger.warning("RESHAPE_OUTPUT LLM call failed")
+            return None
+
     @staticmethod
     def _summarize_steps(completed_steps: dict[str, Any]) -> dict:
         summary = {}

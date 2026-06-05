@@ -395,7 +395,7 @@ async def _dispatch_to_orchestrator(txn_id: str, stored: dict) -> None:
             "input": {k: f"${{input.{k}}}" for k in agent_input} if isinstance(agent_input, dict) else {},
         }],
         "executionLayers": [["step1"]],
-        "finalOutput": {"result": "${step1}"},
+        "finalOutput": "${step1}",
     }
 
     try:
