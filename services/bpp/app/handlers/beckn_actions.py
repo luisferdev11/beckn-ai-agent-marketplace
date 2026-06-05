@@ -354,10 +354,10 @@ async def _dispatch_to_orchestrator(txn_id: str, stored: dict) -> None:
     # Extract enriched payload from performanceAttributes (set by BAP pipeline)
     perf_attrs = commitments[0].get("performanceAttributes", {}) or {}
 
-    # Support both enriched format (agent_input + step_note + prompt)
+    # Support both enriched format (agent_input + task_description + prompt)
     # and legacy flat format (direct agent payload).
     agent_input = perf_attrs.get("agent_input", perf_attrs)
-    step_note = perf_attrs.get("step_note", "")
+    task_description = perf_attrs.get("task_description", "")
     prompt = perf_attrs.get("prompt", "")
     input_schema = perf_attrs.get("input_schema")
     output_schema = perf_attrs.get("output_schema")
@@ -380,7 +380,7 @@ async def _dispatch_to_orchestrator(txn_id: str, stored: dict) -> None:
 
     # Build a single-step plan for orchestrator2
     mini_plan = {
-        "goal": step_note or prompt or "Execute agent task",
+        "goal": task_description or prompt or "Execute agent task",
         "agents": [{
             "agent_name": agent_beckn_id,
             "label": agent_beckn_id,
@@ -401,7 +401,7 @@ async def _dispatch_to_orchestrator(txn_id: str, stored: dict) -> None:
     try:
         ack = await orchestrator_client.start_execution({
             "plan": mini_plan,
-            "prompt": prompt or step_note or "Execute task",
+            "prompt": prompt or task_description or "Execute task",
             "data": agent_input if isinstance(agent_input, dict) else {},
         })
         execution_id = ack.get("execution_id")

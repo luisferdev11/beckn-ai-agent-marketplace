@@ -329,7 +329,7 @@ async def _execute_step(
         "status": {"descriptor": {"code": "DRAFT"}},
         "performanceAttributes": {
             "agent_input": agent_input,
-            "step_note": step.get("rationale", ""),
+            "task_description": f'{pipeline_prompt}. Step {step_id} ({step.get("skill_id", "")}): use agent {agent_name} to process the provided data.',
             "prompt": pipeline_prompt,
             "input_schema": step.get("input_schema"),
             "output_schema": step.get("output_schema"),

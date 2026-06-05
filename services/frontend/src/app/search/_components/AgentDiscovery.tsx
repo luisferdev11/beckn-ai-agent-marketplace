@@ -535,7 +535,7 @@ export function AgentDiscovery({ header }: { header?: ReactNode }) {
               ) : error ? (
                 <ErrorState message={error} onRetry={handleSearch} />
               ) : planResult ? (
-                <PlanResults plan={planResult} onRun={handleRunPipeline} running={pipelineRunning} pipelineInput={pipelineInput} onInputChange={setPipelineInput} />
+                <PlanResults plan={planResult} onRun={handleRunPipeline} running={pipelineRunning} pipelineInput={pipelineInput} onInputChange={setPipelineInput} onPlanChange={setPlanResult} />
               ) : (
                 <PlanEmptyState />
               )
@@ -755,12 +755,13 @@ function EmptyState({ onClear }: { onClear: () => void }) {
 
 // ── Planner result components ──────────────────────────────
 
-function PlanResults({ plan, onRun, running, pipelineInput, onInputChange }: {
+function PlanResults({ plan, onRun, running, pipelineInput, onInputChange, onPlanChange }: {
   plan: Plan;
   onRun: () => void;
   running?: boolean;
   pipelineInput: Record<string, string>;
   onInputChange: (input: Record<string, string>) => void;
+  onPlanChange: (plan: Plan) => void;
 }) {
   const totalSeconds = (plan.estimates.max_latency_ms / 1000).toFixed(plan.estimates.max_latency_ms < 10000 ? 1 : 0);
 
@@ -833,6 +834,34 @@ function PlanResults({ plan, onRun, running, pipelineInput, onInputChange }: {
             step={step}
             index={i}
             isLast={i === plan.steps.length - 1}
+            onSwapAgent={(stepId, altAgentId) => {
+              const newSteps = plan.steps.map(s => {
+                if (s.id !== stepId) return s;
+                const altIdx = s.alternatives.findIndex(a => a.agent_id === altAgentId);
+                if (altIdx === -1) return s;
+                const alt = s.alternatives[altIdx];
+                const oldRec = s.recommended;
+                return {
+                  ...s,
+                  recommended: {
+                    agent_id: alt.agent_id,
+                    name: alt.name,
+                    provider: alt.name, // alternatives don't carry provider
+                    cost: alt.cost,
+                    currency: oldRec.currency,
+                    latency_ms: alt.latency_ms,
+                    reason: alt.note || oldRec.reason,
+                  },
+                  alternatives: [
+                    ...s.alternatives.slice(0, altIdx),
+                    ...s.alternatives.slice(altIdx + 1),
+                    { agent_id: oldRec.agent_id, name: oldRec.name, cost: oldRec.cost, latency_ms: oldRec.latency_ms, note: 'Previously recommended' },
+                  ],
+                };
+              });
+              const newPlan = { ...plan, steps: newSteps };
+              onPlanChange(newPlan);
+            }}
           />
         ))}
       </div>
@@ -898,7 +927,22 @@ const FIELD_LABELS: Record<string, string> = {
   format: 'Format',
 };
 
-const TEXT_FILE_EXTENSIONS = ['.txt', '.md', '.json', '.py', '.js', '.ts', '.jsx', '.tsx', '.html', '.css', '.csv', '.xml', '.yaml', '.yml', '.sql', '.sh', '.go', '.rs', '.java', '.c', '.cpp', '.h', '.rb', '.php', '.swift', '.kt'];
+const TEXT_FILE_EXTENSIONS = ['.txt', '.md', '.json', '.py', '.js', '.ts', '.jsx', '.tsx', '.html', '.css', '.csv', '.xml', '.yaml', '.yml', '.sql', '.sh', '.go', '.rs', '.java', '.c', '.cpp', '.h', '.rb', '.php', '.swift', '.kt', '.pdf'];
+
+async function extractPdfText(file: File): Promise<string> {
+  const pdfjsLib = await import('pdfjs-dist');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const pages: string[] = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    pages.push(content.items.map((item: any) => item.str).join(' '));
+  }
+  return pages.join('\n\n');
+}
 
 function PipelineDataForm({ fields, values, onChange, disabled }: {
   fields: { key: string; label: string; stepName: string }[];
@@ -906,13 +950,30 @@ function PipelineDataForm({ fields, values, onChange, disabled }: {
   onChange: (v: Record<string, string>) => void;
   disabled: boolean;
 }) {
+  const [loading, setLoading] = useState(false);
+
   function handleTextChange(key: string, text: string) {
     onChange({ ...values, [key]: text });
   }
 
-  function handleFileUpload(key: string, e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFileUpload(key: string, e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    if (file.name.toLowerCase().endsWith('.pdf')) {
+      setLoading(true);
+      try {
+        const text = await extractPdfText(file);
+        onChange({ ...values, [key]: text });
+      } catch (err) {
+        console.error('PDF extraction failed:', err);
+        onChange({ ...values, [key]: `[PDF extraction failed: ${file.name}]` });
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = () => {
       const content = reader.result as string;
@@ -1000,12 +1061,12 @@ function PipelineDataForm({ fields, values, onChange, disabled }: {
               <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
                 <path d="M7 1v12M1 7h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
               </svg>
-              Upload file
+              {loading ? 'Reading PDF...' : 'Upload file'}
               <input
                 type="file"
-                accept={TEXT_FILE_EXTENSIONS.join(',')}
+                accept={[...TEXT_FILE_EXTENSIONS, '.pdf'].join(',')}
                 onChange={e => handleFileUpload(field.key, e)}
-                disabled={disabled}
+                disabled={disabled || loading}
                 style={{ display: 'none' }}
               />
             </label>
@@ -1041,7 +1102,7 @@ function PlanStat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function PlanStepCard({ step, index, isLast }: { step: PlanStep; index: number; isLast: boolean }) {
+function PlanStepCard({ step, index, isLast, onSwapAgent }: { step: PlanStep; index: number; isLast: boolean; onSwapAgent: (stepId: string, altAgentId: string) => void }) {
   const [altOpen, setAltOpen] = useState(false);
   const rec = step.recommended;
   const latencySec = rec.latency_ms >= 1000
@@ -1221,18 +1282,42 @@ function PlanStepCard({ step, index, isLast }: { step: PlanStep; index: number; 
                     <div key={alt.agent_id} style={{
                       fontSize: 12, fontFamily: 'var(--font-plex)',
                       color: 'var(--text-secondary)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      gap: 8,
                     }}>
-                      <div style={{ display: 'flex', gap: 10, alignItems: 'baseline' }}>
-                        <strong style={{ color: 'var(--text-primary)' }}>{alt.name}</strong>
-                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>
-                          {rec.currency} {alt.cost.toFixed(2)} · {alt.latency_ms >= 1000 ? `${(alt.latency_ms / 1000).toFixed(1)}s` : `${alt.latency_ms}ms`}
-                        </span>
-                      </div>
-                      {alt.note && (
-                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>
-                          {alt.note}
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', gap: 10, alignItems: 'baseline' }}>
+                          <strong style={{ color: 'var(--text-primary)' }}>{alt.name}</strong>
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+                            {rec.currency} {alt.cost.toFixed(2)} · {alt.latency_ms >= 1000 ? `${(alt.latency_ms / 1000).toFixed(1)}s` : `${alt.latency_ms}ms`}
+                          </span>
                         </div>
-                      )}
+                        {alt.note && (
+                          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>
+                            {alt.note}
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => onSwapAgent(step.id, alt.agent_id)}
+                        style={{
+                          background: 'transparent',
+                          border: '1px solid var(--infosys-cobalt)',
+                          color: 'var(--infosys-cobalt)',
+                          padding: '3px 10px',
+                          borderRadius: 4,
+                          fontFamily: 'var(--font-plex)',
+                          fontSize: 11,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          whiteSpace: 'nowrap',
+                          transition: 'all 0.15s',
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.background = 'var(--infosys-cobalt)'; e.currentTarget.style.color = '#fff'; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--infosys-cobalt)'; }}
+                      >
+                        Use this
+                      </button>
                     </div>
                   ))}
                 </div>
