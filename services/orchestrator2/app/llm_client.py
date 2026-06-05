@@ -228,8 +228,8 @@ class GroqClient:
             "reason": f"Schema validation failed: {vr.error_message}",
             "fix_instructions": f"Agent response does not match output schema: {vr.error_message}",
         }
-
-    # ── 4. RESHAPE_OUTPUT ────────────────────────────────────────────────
+    
+        # ── 4. RESHAPE_OUTPUT ────────────────────────────────────────────────
 
     async def reshape_output(
         self,
@@ -266,6 +266,47 @@ class GroqClient:
             return result if isinstance(result, dict) else None
         except RuntimeError:
             logger.warning("RESHAPE_OUTPUT LLM call failed")
+            return None
+
+
+    # ── 5. SYNTHESIZE ──────────────────────────────────────────────────
+
+    async def synthesize(
+        self,
+        goal: str,
+        prompt: str,
+        raw_result: Any,
+    ) -> dict | None:
+        """Convert raw structured agent output into a human-readable response.
+
+        Returns {"response": "human readable text"} or None on failure.
+        """
+        system = (
+            "You are the final output formatter for an AI agent pipeline. "
+            "The user asked for something and the pipeline produced structured data. "
+            "Your job is to present the result as a clear, readable response.\n\n"
+            "Rules:\n"
+            "- Write a natural, well-formatted response that directly answers what the user asked\n"
+            "- Use bullet points, numbered lists, or paragraphs as appropriate\n"
+            "- Do NOT show raw JSON, field names, or technical structure\n"
+            "- Do NOT mention agents, pipelines, steps, or internal mechanics\n"
+            "- Include ALL relevant information from the data — do not omit details\n"
+            "- Respond in the same language the user wrote in\n"
+            "- Return a JSON object with a single field: {\"response\": \"your formatted text\"}"
+        )
+        user_msg = json.dumps({
+            "user_request": prompt,
+            "goal": goal,
+            "raw_result": raw_result,
+        }, ensure_ascii=False)
+
+        try:
+            result = await self._call(system, user_msg, label="SYNTHESIZE")
+            if isinstance(result, dict) and "response" in result:
+                return result
+            return None
+        except RuntimeError:
+            logger.warning("SYNTHESIZE LLM call failed — returning raw result")
             return None
 
     @staticmethod

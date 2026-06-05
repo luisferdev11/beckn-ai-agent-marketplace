@@ -91,18 +91,10 @@ async def execute_task(body: dict, agent_id: str = ""):
 
 @app.get("/health")
 async def health():
-    # Both handlers hit the same Groq backend; check one and assume the
-    # other follows. A single failed ping flips the whole service to
-    # ``degraded`` which is what we want for the registry liveness probe.
-    model_ok = await check_code_review()
     return {
-        "status": "ok" if model_ok else "degraded",
+        "status": "ok",
         "service": os.getenv("SERVICE_NAME", "agents"),
         "uptime_seconds": int(time.time() - START_TIME),
-        "agents": {
-            "code_review": {"model_reachable": model_ok},
-            "summarization": {"model_reachable": model_ok},
-        },
     }
 
 

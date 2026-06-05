@@ -383,6 +383,21 @@ async def run_plan(record: OrchestrationRecord) -> None:
             })
 
         record.execution_summary = execution_summary
+
+        # ── SYNTHESIZE — convert raw JSON result to human-readable text ──
+        if result and any(s == StepStatus.SUCCESS for s in record.step_statuses.values()):
+            try:
+                synthesized = await llm.synthesize(
+                    goal=goal,
+                    prompt=record.prompt,
+                    raw_result=result,
+                )
+                if synthesized:
+                    result = synthesized
+                    _log_conversation(record, "SYNTHESIZE", None, {"synthesized_keys": list(synthesized.keys()) if isinstance(synthesized, dict) else "text"})
+            except Exception as exc:
+                logger.warning("[%s] Synthesize failed, returning raw result: %s", execution_id, exc)
+
         record.result = result
 
         # Determine final status
