@@ -34,6 +34,7 @@ from app.llm_client import GroqClient
 logger = logging.getLogger(__name__)
 
 llm = GroqClient()
+_http_client = httpx.AsyncClient(timeout=30.0)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -84,13 +85,15 @@ async def _call_agent(endpoint: str, payload: dict, timeout_ms: int = 30000) -> 
 
     for attempt in range(1 + AGENT_MAX_RETRIES):
         try:
-            async with httpx.AsyncClient(timeout=timeout_s) as client:
-                resp = await client.post(endpoint, json=payload)
+            resp = await _http_client.post(endpoint, json=payload, timeout=timeout_s)
             if 200 <= resp.status_code < 300:
                 if not resp.content:
                     return {"status": "success", "result": {"success": True}, "error": None, "usage": {}}
                 body = resp.json()
                 return _normalize_agent_response(body)
+            # 4xx = payload/client error — retrying won't help
+            if 400 <= resp.status_code < 500:
+                raise RuntimeError(f"AGENT HTTP {resp.status_code}: {resp.text[:200]}")
             last_error = RuntimeError(f"AGENT HTTP {resp.status_code}: {resp.text[:200]}")
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
             last_error = exc
@@ -190,6 +193,12 @@ async def _execute_step(
                 step_id=step_id, attempt=attempts, error=str(exc), timestamp=time.time(),
             ))
             _log_conversation(record, "EXECUTE_AGENT_FAILED", step_id, {"error": str(exc)})
+            # If retries remain, let the LLM rebuild the payload
+            if validation_round < VALIDATION_MAX_RETRIES:
+                fix_instructions = f"Agent call failed: {exc}. Rebuild the payload to fix this."
+                logger.warning("[%s][%s] Agent call failed (round %d/%d) — will retry with corrected payload",
+                               record.execution_id, step_id, validation_round + 1, 1 + VALIDATION_MAX_RETRIES)
+                continue
             record.step_statuses[step_id] = StepStatus.FAILED
             return
 
@@ -206,8 +215,11 @@ async def _execute_step(
                 step_id=step_id, attempt=attempts, error=str(error_msg), timestamp=time.time(),
             ))
             _log_conversation(record, "AGENT_ERROR", step_id, {"error": error_msg})
-            record.step_statuses[step_id] = StepStatus.FAILED
-            return
+            # Let the LLM rebuild the payload with the error as fix_instructions
+            fix_instructions = f"Agent rejected the payload with error: {error_msg}. Rebuild the payload to fix this."
+            logger.warning("[%s][%s] Agent error (round %d/%d): %s — will retry with corrected payload",
+                           record.execution_id, step_id, validation_round + 1, 1 + VALIDATION_MAX_RETRIES, error_msg)
+            continue
 
         agent_result = agent_response.get("result")
 
@@ -393,7 +405,7 @@ async def run_plan(record: OrchestrationRecord) -> None:
                     raw_result=result,
                 )
                 if synthesized:
-                    result = synthesized
+                    result = {"raw": result, **synthesized}
                     _log_conversation(record, "SYNTHESIZE", None, {"synthesized_keys": list(synthesized.keys()) if isinstance(synthesized, dict) else "text"})
             except Exception as exc:
                 logger.warning("[%s] Synthesize failed, returning raw result: %s", execution_id, exc)

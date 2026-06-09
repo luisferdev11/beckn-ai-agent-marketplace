@@ -1,9 +1,12 @@
 import asyncio
 import dataclasses
+import logging
 import uuid
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
+
+logger = logging.getLogger(__name__)
 
 from app.executor.models import (
     ExecuteAck,
@@ -62,7 +65,10 @@ async def execute_plan(request: ExecuteRequest):
         data=request.data,
     )
     await store_create(record)
-    asyncio.create_task(run_plan(record))
+    task = asyncio.create_task(run_plan(record))
+    task.add_done_callback(
+        lambda t: logger.error("run_plan crashed: %s", t.exception()) if t.exception() else None
+    )
     return ExecuteAck(execution_id=execution_id, status=ExecutionStatus.PENDING)
 
 

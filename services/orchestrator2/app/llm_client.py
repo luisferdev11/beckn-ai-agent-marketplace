@@ -137,8 +137,11 @@ class GroqClient:
             {"id": s["id"], "agent": s["agent"], "rationale": s.get("rationale", "")}
             for s in steps
         ]
-        data_keys = list(data.keys()) if isinstance(data, dict) else []
-        data_summary = f"Keys: {data_keys}, sample values truncated for brevity."
+        if isinstance(data, dict):
+            data_preview = {k: str(v)[:300] for k, v in data.items()}
+            data_summary = f"Data fields with previews: {json.dumps(data_preview, ensure_ascii=False)}"
+        else:
+            data_summary = f"Data: {str(data)[:300]}"
 
         user_msg = json.dumps({
             "goal": goal,
@@ -228,8 +231,8 @@ class GroqClient:
             "reason": f"Schema validation failed: {vr.error_message}",
             "fix_instructions": f"Agent response does not match output schema: {vr.error_message}",
         }
-    
-        # ── 4. RESHAPE_OUTPUT ────────────────────────────────────────────────
+
+    # ── 4. RESHAPE_OUTPUT ────────────────────────────────────────────────
 
     async def reshape_output(
         self,
