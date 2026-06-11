@@ -284,6 +284,16 @@ async def _dispatch_to_orchestrator(stored: dict) -> None:
             input_schema = input_schema or ra.get("inputSchema")
             output_schema = output_schema or ra.get("outputSchema")
 
+    # Only expose to the orchestrator the keys declared in inputSchema.properties.
+    # Fall back to all keys when no schema is available.
+    schema_keys = set((input_schema or {}).get("properties", {}).keys())
+    if schema_keys and isinstance(agent_input, dict):
+        step_input = {k: f"${{input.{k}}}" for k in schema_keys}
+    elif isinstance(agent_input, dict):
+        step_input = {k: f"${{input.{k}}}" for k in agent_input}
+    else:
+        step_input = {}
+
     # Build a single-step plan compatible with orchestrator2
     mini_plan = {
         "goal": task_description or prompt or "Execute agent task",
@@ -298,7 +308,7 @@ async def _dispatch_to_orchestrator(stored: dict) -> None:
             "id": "step1",
             "agent": agent_id,
             "endpoint": f"{agent_url}/task?agent_id={agent_id}",
-            "input": {k: f"${{input.{k}}}" for k in agent_input} if isinstance(agent_input, dict) else {},
+            "input": step_input,
         }],
         "executionLayers": [["step1"]],
         "finalOutput": "${step1}",

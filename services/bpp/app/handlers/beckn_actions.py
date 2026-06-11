@@ -378,6 +378,19 @@ async def _dispatch_to_orchestrator(txn_id: str, stored: dict) -> None:
         input_schema = input_schema or ra.get("inputSchema") or ra.get("input_schema")
         output_schema = output_schema or ra.get("outputSchema") or ra.get("output_schema")
 
+    # Only expose to the orchestrator the keys declared in inputSchema.properties.
+    # If we mapped all keys from agent_input (which may include format, document,
+    # text, etc. injected by the pipeline), the LLM receives irrelevant fields
+    # and can build a payload that doesn't match the agent's contract.
+    # Fall back to all keys when no schema is available.
+    schema_keys = set((input_schema or {}).get("properties", {}).keys())
+    if schema_keys and isinstance(agent_input, dict):
+        step_input = {k: f"${{input.{k}}}" for k in schema_keys}
+    elif isinstance(agent_input, dict):
+        step_input = {k: f"${{input.{k}}}" for k in agent_input}
+    else:
+        step_input = {}
+
     # Build a single-step plan for orchestrator2
     mini_plan = {
         "goal": task_description or prompt or "Execute agent task",
@@ -392,7 +405,7 @@ async def _dispatch_to_orchestrator(txn_id: str, stored: dict) -> None:
             "id": "step1",
             "agent": agent_beckn_id,
             "endpoint": f"{agent_url}/task?agent_id={agent_beckn_id}",
-            "input": {k: f"${{input.{k}}}" for k in agent_input} if isinstance(agent_input, dict) else {},
+            "input": step_input,
         }],
         "executionLayers": [["step1"]],
         "finalOutput": "${step1}",
