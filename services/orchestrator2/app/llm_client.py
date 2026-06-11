@@ -75,6 +75,11 @@ IMPORTANT: Do NOT second-guess the agent's domain logic. If the output \
 structure matches the schema and the values are coherent with the task \
 described in agent_payload and step_note, mark it as valid.
 
+IMPORTANT: Extra fields beyond those declared in output_schema are ALWAYS \
+acceptable. Only reject if REQUIRED fields are missing, have the wrong type, \
+or the values are semantically incoherent with the task. Never reject solely \
+because the response contains additional fields.
+
 Return a JSON object with exactly these fields:
 - valid: boolean
 - reason: string explaining your assessment

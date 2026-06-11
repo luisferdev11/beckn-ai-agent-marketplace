@@ -159,6 +159,7 @@ async def _execute_step(
     record.step_statuses[step_id] = StepStatus.RUNNING
     attempts = 0
     fix_instructions = ""
+    agent_result = None  # ensure defined even if all rounds exit via agent-error continue
 
     for validation_round in range(1 + VALIDATION_MAX_RETRIES):
         # ── DEFINE_PROMPT ─────────────────────────────────────────────

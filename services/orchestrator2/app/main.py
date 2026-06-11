@@ -36,7 +36,7 @@ async def health():
     active = sum(1 for r in snapshot if r.status == ExecutionStatus.RUNNING)
     return {
         "status": "ok",
-        "service": os.getenv("SERVICE_NAME", "orchestrator2"),
+        "service": os.getenv("SERVICE_NAME", "orchestrator"),
         "version": os.getenv("ORCHESTRATOR_VERSION", "2.0.0"),
         "uptime_seconds": int(time.time() - START_TIME),
         "active_executions": active,
