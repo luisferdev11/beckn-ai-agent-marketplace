@@ -3,7 +3,6 @@
 import { useEffect, useState, use } from 'react';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
-import ReactMarkdown from 'react-markdown';
 import { pollStatus, iconForAgent } from '@/lib/beckn-api';
 import type { PerformanceAttributes } from '@/lib/beckn-api';
 import { RateModal } from '@/app/_components/RateModal';
@@ -29,6 +28,82 @@ interface AgentInfo {
   provider: string;
 }
 
+// ── Markdown renderer (no external deps, React 19 compatible) ────────────────
+
+/** Split a string on **bold** markers and return mixed text/strong nodes. */
+function inlineMarkdown(text: string): ReactNode[] {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, i) =>
+    part.startsWith('**') && part.endsWith('**')
+      ? <strong key={i} style={{ fontWeight: 700 }}>{part.slice(2, -2)}</strong>
+      : part
+  );
+}
+
+function MarkdownBlock({ text }: { text: string }) {
+  const lines = text.split('\n');
+  const nodes: ReactNode[] = [];
+  let listItems: ReactNode[] = [];
+  let listType: 'ul' | 'ol' | null = null;
+  let key = 0;
+
+  const flushList = () => {
+    if (!listItems.length) return;
+    const Tag = listType === 'ol' ? 'ol' : 'ul';
+    nodes.push(
+      <Tag key={key++} style={{ paddingLeft: 22, margin: '8px 0 12px' }}>
+        {listItems}
+      </Tag>
+    );
+    listItems = [];
+    listType = null;
+  };
+
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+
+    // Headings
+    const h3 = line.match(/^###\s+(.*)/);
+    const h2 = line.match(/^##\s+(.*)/);
+    const h1 = line.match(/^#\s+(.*)/);
+    if (h3) { flushList(); nodes.push(<h3 key={key++} style={{ fontSize: 15, fontWeight: 700, margin: '14px 0 6px', color: 'var(--text-primary)', fontFamily: 'var(--font-plex)' }}>{inlineMarkdown(h3[1])}</h3>); continue; }
+    if (h2) { flushList(); nodes.push(<h2 key={key++} style={{ fontSize: 17, fontWeight: 700, margin: '16px 0 8px', color: 'var(--text-primary)', fontFamily: 'var(--font-plex)' }}>{inlineMarkdown(h2[1])}</h2>); continue; }
+    if (h1) { flushList(); nodes.push(<h1 key={key++} style={{ fontSize: 20, fontWeight: 800, margin: '18px 0 10px', color: 'var(--text-primary)', fontFamily: 'var(--font-plex)' }}>{inlineMarkdown(h1[1])}</h1>); continue; }
+
+    // Unordered list
+    const ulMatch = line.match(/^[\*\-•]\s+(.*)/);
+    if (ulMatch) {
+      if (listType === 'ol') flushList();
+      listType = 'ul';
+      listItems.push(<li key={key++} style={{ fontSize: 14, lineHeight: 1.75, marginBottom: 4, color: 'var(--text-primary)', fontFamily: 'var(--font-plex)' }}>{inlineMarkdown(ulMatch[1])}</li>);
+      continue;
+    }
+
+    // Ordered list
+    const olMatch = line.match(/^\d+\.\s+(.*)/);
+    if (olMatch) {
+      if (listType === 'ul') flushList();
+      listType = 'ol';
+      listItems.push(<li key={key++} style={{ fontSize: 14, lineHeight: 1.75, marginBottom: 4, color: 'var(--text-primary)', fontFamily: 'var(--font-plex)' }}>{inlineMarkdown(olMatch[1])}</li>);
+      continue;
+    }
+
+    // Empty line
+    if (!line.trim()) { flushList(); nodes.push(<br key={key++} />); continue; }
+
+    // Normal paragraph line
+    flushList();
+    nodes.push(
+      <p key={key++} style={{ fontSize: 14, lineHeight: 1.8, margin: '0 0 10px', color: 'var(--text-primary)', fontFamily: 'var(--font-plex)' }}>
+        {inlineMarkdown(line)}
+      </p>
+    );
+  }
+
+  flushList();
+  return <>{nodes}</>;
+}
+
 // ── Result renderer ──────────────────────────────────────────────────────────
 
 function ResultContent({ result }: { result: Record<string, unknown> | null | undefined }) {
@@ -47,45 +122,7 @@ function ResultContent({ result }: { result: Record<string, unknown> | null | un
         borderRadius: 12, padding: '18px 20px',
         maxHeight: 600, overflowY: 'auto',
       }}>
-        <ReactMarkdown
-          components={{
-            p: ({ children }: { children: ReactNode }) => (
-              <p style={{ fontSize: 14, color: 'var(--text-primary)', fontFamily: 'var(--font-plex)', lineHeight: 1.8, marginBottom: 12 }}>{children}</p>
-            ),
-            h1: ({ children }: { children: ReactNode }) => (
-              <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'var(--font-plex)', marginBottom: 10, marginTop: 16 }}>{children}</h1>
-            ),
-            h2: ({ children }: { children: ReactNode }) => (
-              <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'var(--font-plex)', marginBottom: 8, marginTop: 14 }}>{children}</h2>
-            ),
-            h3: ({ children }: { children: ReactNode }) => (
-              <h3 style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'var(--font-plex)', marginBottom: 6, marginTop: 12 }}>{children}</h3>
-            ),
-            ul: ({ children }: { children: ReactNode }) => (
-              <ul style={{ paddingLeft: 20, marginBottom: 12 }}>{children}</ul>
-            ),
-            ol: ({ children }: { children: ReactNode }) => (
-              <ol style={{ paddingLeft: 20, marginBottom: 12 }}>{children}</ol>
-            ),
-            li: ({ children }: { children: ReactNode }) => (
-              <li style={{ fontSize: 14, color: 'var(--text-primary)', fontFamily: 'var(--font-plex)', lineHeight: 1.7, marginBottom: 4 }}>{children}</li>
-            ),
-            strong: ({ children }: { children: ReactNode }) => (
-              <strong style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{children}</strong>
-            ),
-            code: ({ children }: { children: ReactNode }) => (
-              <code style={{ fontFamily: 'var(--font-mono)', fontSize: 12, background: 'rgba(0,124,195,0.07)', padding: '1px 5px', borderRadius: 4 }}>{children}</code>
-            ),
-            pre: ({ children }: { children: ReactNode }) => (
-              <pre style={{ background: 'rgba(0,124,195,0.05)', borderRadius: 8, padding: '12px 14px', overflowX: 'auto', marginBottom: 12 }}>{children}</pre>
-            ),
-            blockquote: ({ children }: { children: ReactNode }) => (
-              <blockquote style={{ borderLeft: '3px solid var(--accent)', paddingLeft: 14, margin: '12px 0', color: 'var(--text-secondary)' }}>{children}</blockquote>
-            ),
-          }}
-        >
-          {responseText}
-        </ReactMarkdown>
+        <MarkdownBlock text={responseText} />
       </div>
     );
   }
