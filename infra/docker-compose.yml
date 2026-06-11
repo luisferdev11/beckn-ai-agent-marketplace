@@ -455,6 +455,29 @@ services:
     networks:
       - beckn_network
 
+  # CATALOG database — frontend publisher/admin data (providers, agents, stats).
+  # Both DB_NAME_CATALOG and DB_NAME_METRICS point here so single-pool JOINs work.
+  # Only services/frontend/* connects here.
+  postgres-catalog:
+    image: postgres:16-alpine
+    ports:
+      - "5436:5432"
+    environment:
+      - POSTGRES_DB=beckn_catalog
+      - POSTGRES_USER=catalog_user
+      - POSTGRES_PASSWORD=catalog_secret_123
+    volumes:
+      - ./db/catalog/migrations:/docker-entrypoint-initdb.d/migrations
+      - ./db/catalog/init.sh:/docker-entrypoint-initdb.d/init.sh
+      - pgdata-catalog:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U catalog_user -d beckn_catalog"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - beckn_network
+
   # FRONTEND — React + Next.js
   # UI del marketplace. Consume la API REST del BAP via rewrites de Next.js.
   # Todas las llamadas al BAP van a /api/bap/* y Next.js las proxea internamente.
@@ -471,10 +494,18 @@ services:
       - PORT=3000
       - BAP_URL=http://bap-marketplace:3001
       - MOCKNET_URL=http://mock-network:8090
+      - DB_HOST=postgres-catalog
+      - DB_PORT=5432
+      - DB_NAME_CATALOG=beckn_catalog
+      - DB_NAME_METRICS=beckn_catalog
+      - DB_USER=catalog_user
+      - DB_PASSWORD=catalog_secret_123
     depends_on:
       bap-marketplace:
         condition: service_healthy
       mock-network:
+        condition: service_healthy
+      postgres-catalog:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO/dev/null", "http://127.0.0.1:3000/api/health"]
@@ -522,6 +553,7 @@ volumes:
   pgdata-bap:
   pgdata-bpp:
   pgdata-mocknet:
+  pgdata-catalog:
 
 networks:
   beckn_network:
