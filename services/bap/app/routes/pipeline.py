@@ -180,7 +180,16 @@ def _resolve_input(
 
         if source.startswith("$pipeline_input."):
             field = source[len("$pipeline_input."):]
-            resolved[key] = user_input.get(field, source)
+            value = user_input.get(field)
+            if value is None:
+                # Planner may use field names like "pdf", "file", "doc" that
+                # don't exist in user_input. Try common content aliases so the
+                # agent receives actual data instead of the literal template string.
+                for alias in ("document", "text", "prompt"):
+                    value = user_input.get(alias)
+                    if value:
+                        break
+            resolved[key] = value if value is not None else ""
         elif source.startswith("$steps."):
             # "$steps.s1.summary" → completed_outputs["s1"]["summary"]
             rest = source[len("$steps."):]

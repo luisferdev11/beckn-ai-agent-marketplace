@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useState, use } from 'react';
+import type { ReactNode } from 'react';
 import Link from 'next/link';
+import ReactMarkdown from 'react-markdown';
 import { pollStatus, iconForAgent } from '@/lib/beckn-api';
 import type { PerformanceAttributes } from '@/lib/beckn-api';
 import { RateModal } from '@/app/_components/RateModal';
@@ -25,6 +27,81 @@ interface AgentInfo {
   name: string;
   icon: string;
   provider: string;
+}
+
+// ── Result renderer ──────────────────────────────────────────────────────────
+
+function ResultContent({ result }: { result: Record<string, unknown> | null | undefined }) {
+  if (!result) return null;
+
+  // Orchestrator2 synthesize produces {"raw": {...}, "response": "markdown text"}.
+  // Prefer the human-readable response field and render it as markdown.
+  const responseText =
+    typeof result.response === 'string' ? result.response :
+    typeof result.text === 'string' ? result.text : null;
+
+  if (responseText) {
+    return (
+      <div style={{
+        background: '#FAFCFE', border: '1px solid rgba(0,124,195,0.08)',
+        borderRadius: 12, padding: '18px 20px',
+        maxHeight: 600, overflowY: 'auto',
+      }}>
+        <ReactMarkdown
+          components={{
+            p: ({ children }: { children: ReactNode }) => (
+              <p style={{ fontSize: 14, color: 'var(--text-primary)', fontFamily: 'var(--font-plex)', lineHeight: 1.8, marginBottom: 12 }}>{children}</p>
+            ),
+            h1: ({ children }: { children: ReactNode }) => (
+              <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'var(--font-plex)', marginBottom: 10, marginTop: 16 }}>{children}</h1>
+            ),
+            h2: ({ children }: { children: ReactNode }) => (
+              <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'var(--font-plex)', marginBottom: 8, marginTop: 14 }}>{children}</h2>
+            ),
+            h3: ({ children }: { children: ReactNode }) => (
+              <h3 style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'var(--font-plex)', marginBottom: 6, marginTop: 12 }}>{children}</h3>
+            ),
+            ul: ({ children }: { children: ReactNode }) => (
+              <ul style={{ paddingLeft: 20, marginBottom: 12 }}>{children}</ul>
+            ),
+            ol: ({ children }: { children: ReactNode }) => (
+              <ol style={{ paddingLeft: 20, marginBottom: 12 }}>{children}</ol>
+            ),
+            li: ({ children }: { children: ReactNode }) => (
+              <li style={{ fontSize: 14, color: 'var(--text-primary)', fontFamily: 'var(--font-plex)', lineHeight: 1.7, marginBottom: 4 }}>{children}</li>
+            ),
+            strong: ({ children }: { children: ReactNode }) => (
+              <strong style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{children}</strong>
+            ),
+            code: ({ children }: { children: ReactNode }) => (
+              <code style={{ fontFamily: 'var(--font-mono)', fontSize: 12, background: 'rgba(0,124,195,0.07)', padding: '1px 5px', borderRadius: 4 }}>{children}</code>
+            ),
+            pre: ({ children }: { children: ReactNode }) => (
+              <pre style={{ background: 'rgba(0,124,195,0.05)', borderRadius: 8, padding: '12px 14px', overflowX: 'auto', marginBottom: 12 }}>{children}</pre>
+            ),
+            blockquote: ({ children }: { children: ReactNode }) => (
+              <blockquote style={{ borderLeft: '3px solid var(--accent)', paddingLeft: 14, margin: '12px 0', color: 'var(--text-secondary)' }}>{children}</blockquote>
+            ),
+          }}
+        >
+          {responseText}
+        </ReactMarkdown>
+      </div>
+    );
+  }
+
+  // Fallback: raw JSON for structured results without a response field
+  return (
+    <pre style={{
+      background: '#FAFCFE', border: '1px solid rgba(0,124,195,0.08)',
+      borderRadius: 12, padding: '18px 20px',
+      fontSize: 12, color: 'var(--text-primary)', fontFamily: 'var(--font-mono)',
+      lineHeight: 1.6, whiteSpace: 'pre-wrap', overflow: 'auto',
+      maxHeight: 500,
+    }}>
+      {JSON.stringify(result, null, 2)}
+    </pre>
+  );
 }
 
 export default function ResultPage({ params }: ResultPageProps) {
@@ -382,27 +459,7 @@ export default function ResultPage({ params }: ResultPageProps) {
                 {performance.pipeline_mode ? 'PIPELINE OUTPUT' : 'RESULT'}
               </div>
 
-              {performance.result?.text ? (
-                <div style={{
-                  background: '#FAFCFE', border: '1px solid rgba(0,124,195,0.08)',
-                  borderRadius: 12, padding: '18px 20px',
-                  fontSize: 14, color: 'var(--text-primary)', fontFamily: 'var(--font-plex)',
-                  lineHeight: 1.8, whiteSpace: 'pre-wrap',
-                  maxHeight: 500, overflowY: 'auto',
-                }}>
-                  {performance.result.text as string}
-                </div>
-              ) : (
-                <pre style={{
-                  background: '#FAFCFE', border: '1px solid rgba(0,124,195,0.08)',
-                  borderRadius: 12, padding: '18px 20px',
-                  fontSize: 12, color: 'var(--text-primary)', fontFamily: 'var(--font-mono)',
-                  lineHeight: 1.6, whiteSpace: 'pre-wrap', overflow: 'auto',
-                  maxHeight: 500,
-                }}>
-                  {JSON.stringify(performance.result, null, 2)}
-                </pre>
-              )}
+              <ResultContent result={performance.result} />
             </div>
           </div>
         )}
