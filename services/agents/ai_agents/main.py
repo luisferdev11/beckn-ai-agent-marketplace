@@ -10,6 +10,7 @@ from ai_agents.code_review import (
     get_metrics as get_code_review_metrics,
     run_task as run_code_review,
 )
+from ai_agents.data_extraction import run_task as run_data_extraction
 from ai_agents.summarization import (
     check_model as check_summarization,
     get_metrics as get_summarization_metrics,
@@ -59,9 +60,11 @@ _HANDLERS = {
     # outputSchema {summary, key_points, language} actually matches
     # the runtime output.
     "agent-summarizer-001": run_summarization,
-    # agent-data-extractor-001: no real extraction handler in this service.
-    # Falls back to _DEFAULT_HANDLER (text_generation) which will attempt
-    # a best-effort response. The real extractor lives in agents-serg:3006.
+    # agent-data-extractor-001: extracts structured fields from documents.
+    # Returns {"fields": dict, "raw_text": str} matching its outputSchema.
+    # Previously fell back to text_generation ({"text": str}) causing
+    # VALIDATE_RESPONSE loops in the orchestrator.
+    "agent-data-extractor-001": run_data_extraction,
     "text-generator": run_text_generation,
 }
 
