@@ -458,7 +458,14 @@ async def run_pipeline(req: PipelineRunRequest):
             for r in results:
                 all_results.append(r)
                 if r.status == "COMPLETED" and r.output is not None:
-                    completed_outputs[r.step_id] = r.output
+                    # Orchestrator2 wraps the final result in {"raw": original, "response": "..."}
+                    # after the synthesize step. Unwrap so downstream steps can resolve
+                    # $steps.sN.field references against the actual agent output fields,
+                    # not the synthesize envelope.
+                    output = r.output
+                    if isinstance(output, dict) and "raw" in output and isinstance(output.get("raw"), dict):
+                        output = output["raw"]
+                    completed_outputs[r.step_id] = output
 
     # ── 4. Assemble final output ──────────────────────────────────────
     statuses = {r.status for r in all_results}
