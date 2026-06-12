@@ -463,9 +463,9 @@ services:
     ports:
       - "5437:5432"
     environment:
-      - POSTGRES_DB=beckn_catalog
-      - POSTGRES_USER=catalog_user
-      - POSTGRES_PASSWORD=catalog_secret_123
+      - POSTGRES_DB=${CATALOG_DB_NAME}
+      - POSTGRES_USER=${CATALOG_DB_USER}
+      - POSTGRES_PASSWORD=${CATALOG_DB_PASSWORD}
     volumes:
       - ./db/catalog/migrations:/docker-entrypoint-initdb.d/migrations
       - ./db/catalog/init.sh:/docker-entrypoint-initdb.d/init.sh
@@ -496,10 +496,10 @@ services:
       - MOCKNET_URL=http://mock-network:8090
       - DB_HOST=postgres-catalog
       - DB_PORT=5432
-      - DB_NAME_CATALOG=beckn_catalog
-      - DB_NAME_METRICS=beckn_catalog
-      - DB_USER=catalog_user
-      - DB_PASSWORD=catalog_secret_123
+      - DB_NAME_CATALOG=${CATALOG_DB_NAME}
+      - DB_NAME_METRICS=${CATALOG_DB_NAME}
+      - DB_USER=${CATALOG_DB_USER}
+      - DB_PASSWORD=${CATALOG_DB_PASSWORD}
     depends_on:
       bap-marketplace:
         condition: service_healthy
