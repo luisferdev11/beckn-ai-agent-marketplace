@@ -461,7 +461,7 @@ services:
   postgres-catalog:
     image: postgres:16-alpine
     ports:
-      - "5436:5432"
+      - "5437:5432"
     environment:
       - POSTGRES_DB=beckn_catalog
       - POSTGRES_USER=catalog_user
