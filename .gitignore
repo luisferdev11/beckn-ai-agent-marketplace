@@ -60,3 +60,7 @@ yarn-error.log*
 
 # Misc
 *.pem
+
+# Generated vendor files (copied during Docker build)
+services/frontend/public/pdf.worker.min.mjs
+

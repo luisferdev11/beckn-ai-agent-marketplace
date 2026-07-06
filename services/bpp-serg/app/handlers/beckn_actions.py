@@ -240,7 +240,7 @@ async def handle_confirm(context: dict, message: dict) -> dict:
 
 
 async def _dispatch_to_orchestrator(stored: dict) -> None:
-    """Fire-and-forget: call orchestrator /execute and store execution_id."""
+    """Fire-and-forget: build a mini-plan and dispatch to orchestrator2."""
     contract_id = stored["id"]
     commitments = stored.get("commitments", [])
     if not commitments:
@@ -258,30 +258,70 @@ async def _dispatch_to_orchestrator(stored: dict) -> None:
         logger.error("dispatch: no agent_url for agent_id=%s in contract %s", agent_id, contract_id)
         return
 
-    agent_input = commitments[0].get("performanceAttributes", {}) or {}
-    sla = {}
-    agent_catalog = get_agent_by_id(agent_id)
-    if agent_catalog:
-        sla = agent_catalog.get("resourceAttributes", {}).get("sla", {})
+    # Extract enriched payload from performanceAttributes (set by BAP pipeline).
+    # Support both enriched format (agent_input + task_description + prompt)
+    # and legacy flat format (direct agent payload).
+    perf_attrs = commitments[0].get("performanceAttributes", {}) or {}
+    agent_input = perf_attrs.get("agent_input", perf_attrs)
+    task_description = perf_attrs.get("task_description", "")
+    prompt = perf_attrs.get("prompt", "")
+    input_schema = perf_attrs.get("input_schema")
+    output_schema = perf_attrs.get("output_schema")
 
-    timeout_ms = 30000
-    max_latency = sla.get("maxLatency", "PT30S")
-    if max_latency.startswith("PT") and max_latency.endswith("S"):
-        try:
-            timeout_ms = int(float(max_latency[2:-1]) * 1000)
-        except ValueError:
-            pass
+    # Fallback: extract prompt from resource descriptor (legacy single-agent flow)
+    if not agent_input or agent_input is perf_attrs:
+        desc = resources[0].get("descriptor", {})
+        prompt_text = desc.get("longDesc", "") or desc.get("shortDesc", "")
+        if prompt_text:
+            agent_input = {"text": prompt_text}
+            prompt = prompt or prompt_text
+
+    # Get schemas from in-memory catalog if not provided by BAP
+    if not input_schema or not output_schema:
+        agent_catalog = get_agent_by_id(agent_id)
+        if agent_catalog:
+            ra = agent_catalog.get("resourceAttributes", {})
+            input_schema = input_schema or ra.get("inputSchema")
+            output_schema = output_schema or ra.get("outputSchema")
+
+    # Only expose to the orchestrator the keys declared in inputSchema.properties.
+    # Fall back to all keys when no schema is available.
+    schema_keys = set((input_schema or {}).get("properties", {}).keys())
+    if schema_keys and isinstance(agent_input, dict):
+        step_input = {k: f"${{input.{k}}}" for k in schema_keys}
+    elif isinstance(agent_input, dict):
+        step_input = {k: f"${{input.{k}}}" for k in agent_input}
+    else:
+        step_input = {}
+
+    # Build a single-step plan compatible with orchestrator2
+    mini_plan = {
+        "goal": task_description or prompt or "Execute agent task",
+        "agents": [{
+            "agent_name": agent_id,
+            "label": agent_id,
+            "endpoint": f"{agent_url}/task?agent_id={agent_id}",
+            "inputSchema": input_schema or {},
+            "outputSchema": output_schema or {},
+        }],
+        "steps": [{
+            "id": "step1",
+            "agent": agent_id,
+            "endpoint": f"{agent_url}/task?agent_id={agent_id}",
+            "input": step_input,
+        }],
+        "executionLayers": [["step1"]],
+        "finalOutput": "${step1}",
+    }
 
     try:
         ack = await orchestrator_client.start_execution({
-            "contract_id": contract_id,
-            "agent_id": agent_id,
-            "agent_url": agent_url,
-            "input": agent_input,
-            "timeout_ms": timeout_ms,
+            "plan": mini_plan,
+            "prompt": prompt or task_description or "Execute task",
+            "data": agent_input if isinstance(agent_input, dict) else {},
         })
         stored["execution_id"] = ack.get("execution_id")
-        logger.info("dispatch: contract %s → execution %s", contract_id, stored["execution_id"])
+        logger.info("dispatch: contract %s → execution %s (orch2)", contract_id, stored["execution_id"])
     except Exception as exc:
         logger.error("dispatch: failed to start execution for contract %s: %s", contract_id, exc)
 
@@ -312,15 +352,24 @@ async def handle_status(context: dict, message: dict) -> dict:
             exec_data = await orchestrator_client.get_execution(execution_id)
             exec_status = exec_data.get("status", "PENDING")
             result = exec_data.get("result")
+            # orchestrator2 has no metadata dict; keep for any future v1 fallback
             metadata = exec_data.get("metadata") or {}
             error = exec_data.get("error")
-            if exec_status == "COMPLETED":
+
+            # orchestrator2: extract error from execution_summary if present
+            if not error:
+                for step_summary in exec_data.get("execution_summary", []):
+                    if step_summary.get("status") == "failed" and step_summary.get("note"):
+                        error = step_summary["note"]
+                        break
+
+            if exec_status in ("COMPLETED", "PARTIAL"):
                 # Serg agents return plain strings; Tecla agents return dicts.
-                # Handle both shapes so the on_status callback always carries
-                # something human-readable in shortDesc.
+                # orchestrator2 wraps raw result + human-readable response.
                 if isinstance(result, dict):
                     short_desc = (
-                        result.get("review")
+                        result.get("response")
+                        or result.get("review")
                         or result.get("summary")
                         or result.get("output")
                         or str(result)

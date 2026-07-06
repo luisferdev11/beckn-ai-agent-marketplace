@@ -333,7 +333,7 @@ async def handle_confirm(context: dict, message: dict) -> dict:
 
 
 async def _dispatch_to_orchestrator(txn_id: str, stored: dict) -> None:
-    """Fire-and-forget: call orchestrator /execute and store execution_id."""
+    """Fire-and-forget: build a mini-plan and dispatch to orchestrator2."""
     commitments = _parse_jsonb(stored.get("commitments", []))
     if not commitments:
         return
@@ -351,28 +351,75 @@ async def _dispatch_to_orchestrator(txn_id: str, stored: dict) -> None:
         sla = _parse_jsonb(agent.get("sla", {}))
         agent_url = agent.get("access_point_url") or agent_url
 
-    # Extract prompt from multiple possible locations in the commitment
-    agent_input = commitments[0].get("performanceAttributes", {}) or {}
-    resources = commitments[0].get("resources", [])
-    if resources and not agent_input:
-        desc = resources[0].get("descriptor", {})
-        prompt_text = desc.get("longDesc", "") or desc.get("shortDesc", "")
-        if prompt_text:
-            agent_input = {"prompt": prompt_text}
+    # Extract enriched payload from performanceAttributes (set by BAP pipeline)
+    perf_attrs = commitments[0].get("performanceAttributes", {}) or {}
 
-    timeout_ms = int(sla.get("maxLatencyMs", 30000))
+    # Support both enriched format (agent_input + task_description + prompt)
+    # and legacy flat format (direct agent payload).
+    agent_input = perf_attrs.get("agent_input", perf_attrs)
+    task_description = perf_attrs.get("task_description", "")
+    prompt = perf_attrs.get("prompt", "")
+    input_schema = perf_attrs.get("input_schema")
+    output_schema = perf_attrs.get("output_schema")
+
+    # Fallback: extract prompt from resource descriptor (legacy single-agent flow)
+    if not agent_input or agent_input is perf_attrs:
+        resources_list = commitments[0].get("resources", [])
+        if resources_list and not perf_attrs:
+            desc = resources_list[0].get("descriptor", {})
+            prompt_text = desc.get("longDesc", "") or desc.get("shortDesc", "")
+            if prompt_text:
+                agent_input = {"prompt": prompt_text}
+                prompt = prompt or prompt_text
+
+    # If we still have no schemas, try to get them from the agent DB record
+    if agent and (not input_schema or not output_schema):
+        ra = _parse_jsonb(agent.get("resource_attributes", {}))
+        input_schema = input_schema or ra.get("inputSchema") or ra.get("input_schema")
+        output_schema = output_schema or ra.get("outputSchema") or ra.get("output_schema")
+
+    # Only expose to the orchestrator the keys declared in inputSchema.properties.
+    # If we mapped all keys from agent_input (which may include format, document,
+    # text, etc. injected by the pipeline), the LLM receives irrelevant fields
+    # and can build a payload that doesn't match the agent's contract.
+    # Fall back to all keys when no schema is available.
+    schema_keys = set((input_schema or {}).get("properties", {}).keys())
+    if schema_keys and isinstance(agent_input, dict):
+        step_input = {k: f"${{input.{k}}}" for k in schema_keys}
+    elif isinstance(agent_input, dict):
+        step_input = {k: f"${{input.{k}}}" for k in agent_input}
+    else:
+        step_input = {}
+
+    # Build a single-step plan for orchestrator2
+    mini_plan = {
+        "goal": task_description or prompt or "Execute agent task",
+        "agents": [{
+            "agent_name": agent_beckn_id,
+            "label": agent_beckn_id,
+            "endpoint": f"{agent_url}/task?agent_id={agent_beckn_id}",
+            "inputSchema": input_schema or {},
+            "outputSchema": output_schema or {},
+        }],
+        "steps": [{
+            "id": "step1",
+            "agent": agent_beckn_id,
+            "endpoint": f"{agent_url}/task?agent_id={agent_beckn_id}",
+            "input": step_input,
+        }],
+        "executionLayers": [["step1"]],
+        "finalOutput": "${step1}",
+    }
 
     try:
         ack = await orchestrator_client.start_execution({
-            "contract_id": stored["contract_code"],
-            "agent_id": agent_beckn_id,
-            "agent_url": agent_url,
-            "input": agent_input,
-            "timeout_ms": timeout_ms,
+            "plan": mini_plan,
+            "prompt": prompt or task_description or "Execute task",
+            "data": agent_input if isinstance(agent_input, dict) else {},
         })
         execution_id = ack.get("execution_id")
         await repo.update_contract(txn_id, execution_id=execution_id)
-        logger.info("dispatch: txn %s → execution %s", txn_id[:8], execution_id)
+        logger.info("dispatch: txn %s → execution %s (orch2)", txn_id[:8], execution_id)
     except Exception as exc:
         logger.error("dispatch: failed for txn %s: %s", txn_id[:8], exc)
 
@@ -398,9 +445,19 @@ async def handle_status(context: dict, message: dict) -> dict:
             exec_data = await orchestrator_client.get_execution(execution_id)
             exec_status = exec_data.get("status", "PENDING")
             result = exec_data.get("result") or {}
+
+            # Support both orchestrator v1 (metadata dict) and v2 (execution_summary list)
             metadata = exec_data.get("metadata") or {}
             error = exec_data.get("error")
-            if exec_status == "COMPLETED":
+
+            # Orchestrator v2: extract error from execution_summary if present
+            if not error:
+                for step_summary in exec_data.get("execution_summary", []):
+                    if step_summary.get("status") == "failed" and step_summary.get("note"):
+                        error = step_summary["note"]
+                        break
+
+            if exec_status in ("COMPLETED", "PARTIAL"):
                 short_desc = result.get("review") or result.get("summary") or str(result)
                 await repo.update_contract(txn_id,
                     status="COMPLETED",

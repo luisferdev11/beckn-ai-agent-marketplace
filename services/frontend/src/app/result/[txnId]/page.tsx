@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, use } from 'react';
+import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { pollStatus, iconForAgent } from '@/lib/beckn-api';
 import type { PerformanceAttributes } from '@/lib/beckn-api';
@@ -25,6 +26,119 @@ interface AgentInfo {
   name: string;
   icon: string;
   provider: string;
+}
+
+// ── Markdown renderer (no external deps, React 19 compatible) ────────────────
+
+/** Split a string on **bold** markers and return mixed text/strong nodes. */
+function inlineMarkdown(text: string): ReactNode[] {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, i) =>
+    part.startsWith('**') && part.endsWith('**')
+      ? <strong key={i} style={{ fontWeight: 700 }}>{part.slice(2, -2)}</strong>
+      : part
+  );
+}
+
+function MarkdownBlock({ text }: { text: string }) {
+  const lines = text.split('\n');
+  const nodes: ReactNode[] = [];
+  let listItems: ReactNode[] = [];
+  let listType: 'ul' | 'ol' | null = null;
+  let key = 0;
+
+  const flushList = () => {
+    if (!listItems.length) return;
+    const Tag = listType === 'ol' ? 'ol' : 'ul';
+    nodes.push(
+      <Tag key={key++} style={{ paddingLeft: 22, margin: '8px 0 12px' }}>
+        {listItems}
+      </Tag>
+    );
+    listItems = [];
+    listType = null;
+  };
+
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+
+    // Headings
+    const h3 = line.match(/^###\s+(.*)/);
+    const h2 = line.match(/^##\s+(.*)/);
+    const h1 = line.match(/^#\s+(.*)/);
+    if (h3) { flushList(); nodes.push(<h3 key={key++} style={{ fontSize: 15, fontWeight: 700, margin: '14px 0 6px', color: 'var(--text-primary)', fontFamily: 'var(--font-plex)' }}>{inlineMarkdown(h3[1])}</h3>); continue; }
+    if (h2) { flushList(); nodes.push(<h2 key={key++} style={{ fontSize: 17, fontWeight: 700, margin: '16px 0 8px', color: 'var(--text-primary)', fontFamily: 'var(--font-plex)' }}>{inlineMarkdown(h2[1])}</h2>); continue; }
+    if (h1) { flushList(); nodes.push(<h1 key={key++} style={{ fontSize: 20, fontWeight: 800, margin: '18px 0 10px', color: 'var(--text-primary)', fontFamily: 'var(--font-plex)' }}>{inlineMarkdown(h1[1])}</h1>); continue; }
+
+    // Unordered list
+    const ulMatch = line.match(/^[\*\-•]\s+(.*)/);
+    if (ulMatch) {
+      if (listType === 'ol') flushList();
+      listType = 'ul';
+      listItems.push(<li key={key++} style={{ fontSize: 14, lineHeight: 1.75, marginBottom: 4, color: 'var(--text-primary)', fontFamily: 'var(--font-plex)' }}>{inlineMarkdown(ulMatch[1])}</li>);
+      continue;
+    }
+
+    // Ordered list
+    const olMatch = line.match(/^\d+\.\s+(.*)/);
+    if (olMatch) {
+      if (listType === 'ul') flushList();
+      listType = 'ol';
+      listItems.push(<li key={key++} style={{ fontSize: 14, lineHeight: 1.75, marginBottom: 4, color: 'var(--text-primary)', fontFamily: 'var(--font-plex)' }}>{inlineMarkdown(olMatch[1])}</li>);
+      continue;
+    }
+
+    // Empty line
+    if (!line.trim()) { flushList(); nodes.push(<br key={key++} />); continue; }
+
+    // Normal paragraph line
+    flushList();
+    nodes.push(
+      <p key={key++} style={{ fontSize: 14, lineHeight: 1.8, margin: '0 0 10px', color: 'var(--text-primary)', fontFamily: 'var(--font-plex)' }}>
+        {inlineMarkdown(line)}
+      </p>
+    );
+  }
+
+  flushList();
+  return <>{nodes}</>;
+}
+
+// ── Result renderer ──────────────────────────────────────────────────────────
+
+function ResultContent({ result }: { result: Record<string, unknown> | null | undefined }) {
+  if (!result) return null;
+
+  // Orchestrator2 synthesize produces {"raw": {...}, "response": "markdown text"}.
+  // Prefer the human-readable response field and render it as markdown.
+  const responseText =
+    typeof result.response === 'string' ? result.response :
+    typeof result.text === 'string' ? result.text : null;
+
+  if (responseText) {
+    return (
+      <div style={{
+        background: '#FAFCFE', border: '1px solid rgba(0,124,195,0.08)',
+        borderRadius: 12, padding: '18px 20px',
+        maxHeight: 600, overflowY: 'auto',
+      }}>
+        <MarkdownBlock text={responseText} />
+      </div>
+    );
+  }
+
+  // Fallback: raw JSON for structured results without a response field
+  return (
+    <pre style={{
+      background: '#FAFCFE', border: '1px solid rgba(0,124,195,0.08)',
+      borderRadius: 12, padding: '18px 20px',
+      fontSize: 12, color: 'var(--text-primary)', fontFamily: 'var(--font-mono)',
+      lineHeight: 1.6, whiteSpace: 'pre-wrap', overflow: 'auto',
+      maxHeight: 500,
+    }}>
+      {JSON.stringify(result, null, 2)}
+    </pre>
+  );
 }
 
 export default function ResultPage({ params }: ResultPageProps) {
@@ -382,27 +496,7 @@ export default function ResultPage({ params }: ResultPageProps) {
                 {performance.pipeline_mode ? 'PIPELINE OUTPUT' : 'RESULT'}
               </div>
 
-              {performance.result?.text ? (
-                <div style={{
-                  background: '#FAFCFE', border: '1px solid rgba(0,124,195,0.08)',
-                  borderRadius: 12, padding: '18px 20px',
-                  fontSize: 14, color: 'var(--text-primary)', fontFamily: 'var(--font-plex)',
-                  lineHeight: 1.8, whiteSpace: 'pre-wrap',
-                  maxHeight: 500, overflowY: 'auto',
-                }}>
-                  {performance.result.text as string}
-                </div>
-              ) : (
-                <pre style={{
-                  background: '#FAFCFE', border: '1px solid rgba(0,124,195,0.08)',
-                  borderRadius: 12, padding: '18px 20px',
-                  fontSize: 12, color: 'var(--text-primary)', fontFamily: 'var(--font-mono)',
-                  lineHeight: 1.6, whiteSpace: 'pre-wrap', overflow: 'auto',
-                  maxHeight: 500,
-                }}>
-                  {JSON.stringify(performance.result, null, 2)}
-                </pre>
-              )}
+              <ResultContent result={performance.result} />
             </div>
           </div>
         )}

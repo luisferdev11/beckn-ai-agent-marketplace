@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BAP Callbacks — Beckn v2</title>
+<style>
+  :root {
+    --bg: #0d1117; --bg2: #161b22; --bg3: #21262d;
+    --border: #30363d; --text: #e6edf3; --text2: #8b949e;
+    --green: #3fb950; --red: #f85149; --yellow: #d29922;
+    --blue: #58a6ff; --purple: #bc8cff; --cyan: #39d2c0;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'SF Mono', 'Fira Code', monospace; background: var(--bg); color: var(--text); font-size: 13px; }
+
+  /* ── Header ── */
+  .header {
+    padding: 12px 24px; background: var(--bg2); border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 16px; position: sticky; top: 0; z-index: 10;
+  }
+  .header h1 { font-size: 15px; font-weight: 600; white-space: nowrap; }
+  .header .url-input {
+    flex: 1; max-width: 360px; background: var(--bg3); border: 1px solid var(--border);
+    color: var(--text); padding: 6px 12px; border-radius: 6px; font-family: inherit; font-size: 12px;
+  }
+  .header .controls { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+  .btn {
+    background: var(--blue); color: #000; border: none; padding: 6px 16px; border-radius: 6px;
+    font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+  }
+  .btn:hover { opacity: 0.85; }
+  .btn.pause { background: var(--yellow); }
+  .btn.paused { background: var(--red); }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .status-dot.live { background: var(--green); animation: pulse 2s infinite; }
+  .status-dot.off { background: var(--red); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .status-text { font-size: 11px; color: var(--text2); }
+  .count-badge {
+    background: var(--bg3); border: 1px solid var(--border); padding: 4px 10px;
+    border-radius: 12px; font-size: 11px; color: var(--text2);
+  }
+
+  /* ── Layout ── */
+  .layout { display: flex; height: calc(100vh - 48px); }
+  .sidebar {
+    width: 300px; min-width: 240px; border-right: 1px solid var(--border);
+    overflow-y: auto; background: var(--bg2);
+  }
+  .main { flex: 1; overflow-y: auto; padding: 20px 24px; }
+
+  /* ── Sidebar transactions ── */
+  .txn-item {
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    cursor: pointer; transition: background 0.1s;
+  }
+  .txn-item:hover { background: var(--bg3); }
+  .txn-item.active { background: var(--bg3); border-left: 3px solid var(--blue); }
+  .txn-id { font-size: 11px; color: var(--text2); font-family: inherit; }
+  .txn-actions { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+  .action-chip {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.03em;
+  }
+  .action-chip.on_discover { background: rgba(88,166,255,0.15); color: var(--blue); }
+  .action-chip.on_select { background: rgba(188,140,255,0.15); color: var(--purple); }
+  .action-chip.on_init { background: rgba(57,210,192,0.15); color: var(--cyan); }
+  .action-chip.on_confirm { background: rgba(63,185,80,0.15); color: var(--green); }
+  .action-chip.on_status { background: rgba(210,153,34,0.15); color: var(--yellow); }
+  .action-chip.on_rate { background: rgba(248,81,73,0.15); color: var(--red); }
+  .action-chip.error { background: rgba(248,81,73,0.25); color: var(--red); border: 1px solid var(--red); }
+  .txn-time { font-size: 10px; color: var(--text2); margin-top: 4px; }
+
+  /* ── Filters ── */
+  .filters {
+    padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--bg);
+    display: flex; gap: 6px; flex-wrap: wrap;
+  }
+  .filter-btn {
+    background: var(--bg3); border: 1px solid var(--border); color: var(--text2);
+    padding: 3px 10px; border-radius: 12px; font-size: 10px; font-family: inherit;
+    cursor: pointer; transition: all 0.15s;
+  }
+  .filter-btn:hover { border-color: var(--blue); color: var(--text); }
+  .filter-btn.active { background: rgba(88,166,255,0.15); border-color: var(--blue); color: var(--blue); }
+
+  /* ── Main detail ── */
+  .section { margin-bottom: 24px; }
+  .section-title { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 10px; }
+
+  .callback-card {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
+    margin-bottom: 12px; overflow: hidden;
+  }
+  .callback-header {
+    padding: 10px 14px; display: flex; align-items: center; gap: 12px;
+    border-bottom: 1px solid var(--border); cursor: pointer;
+  }
+  .callback-header:hover { background: var(--bg3); }
+  .callback-num { font-size: 10px; color: var(--text2); min-width: 24px; }
+  .callback-time { font-size: 10px; color: var(--text2); margin-left: auto; }
+  .callback-body { display: none; }
+  .callback-body.open { display: block; }
+
+  .json-section { padding: 12px 14px; border-top: 1px solid var(--border); }
+  .json-label { font-size: 10px; color: var(--text2); text-transform: uppercase; margin-bottom: 6px; }
+  .json-block {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px 12px; font-size: 11px; line-height: 1.5; overflow-x: auto;
+    max-height: 400px; overflow-y: auto; white-space: pre-wrap; word-break: break-word;
+  }
+  .json-block .key { color: var(--blue); }
+  .json-block .string { color: var(--green); }
+  .json-block .number { color: var(--yellow); }
+  .json-block .boolean { color: var(--purple); }
+  .json-block .null { color: var(--text2); }
+
+  .error-banner {
+    background: rgba(248,81,73,0.1); border: 1px solid var(--red); border-radius: 6px;
+    padding: 10px 14px; margin-bottom: 12px; color: var(--red); font-size: 12px;
+  }
+
+  .empty-state {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 60%; color: var(--text2); gap: 12px;
+  }
+  .empty-state .icon { font-size: 48px; opacity: 0.3; }
+  .empty-state p { font-size: 13px; }
+
+  /* ── Timeline (all callbacks view) ── */
+  .timeline-card {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 14px; margin-bottom: 8px; display: flex; align-items: center; gap: 12px;
+    cursor: pointer; transition: background 0.1s;
+  }
+  .timeline-card:hover { background: var(--bg3); }
+  .timeline-txn { font-size: 10px; color: var(--text2); min-width: 80px; overflow: hidden; text-overflow: ellipsis; }
+  .timeline-time { font-size: 10px; color: var(--text2); margin-left: auto; white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>BAP Callbacks</h1>
+  <input class="url-input" id="baseUrl" value="http://localhost:3001" placeholder="BAP base URL" />
+  <div class="controls">
+    <span class="count-badge" id="countBadge">0 callbacks</span>
+    <span class="status-dot live" id="statusDot"></span>
+    <span class="status-text" id="statusText">live</span>
+    <button class="btn pause" id="pauseBtn" onclick="togglePause()">Pause</button>
+    <button class="btn" onclick="fetchNow()">Refresh</button>
+  </div>
+</div>
+
+<div class="layout">
+  <div class="sidebar">
+    <div class="filters" id="filters"></div>
+    <div id="sidebarContent"></div>
+  </div>
+  <div class="main" id="mainContent">
+    <div class="empty-state">
+      <div class="icon">&#9673;</div>
+      <p>Select a transaction or wait for callbacks...</p>
+    </div>
+  </div>
+</div>
+
+<script>
+const ACTIONS = ['on_discover','on_select','on_init','on_confirm','on_status','on_rate'];
+const REFRESH_MS = 5000;
+
+let paused = false;
+let timer = null;
+let allCallbacks = [];
+let selectedTxn = null;
+let activeFilters = new Set();
+
+// ── Helpers ──
+function getBase() { return document.getElementById('baseUrl').value.replace(/\/+$/, ''); }
+
+function formatTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleTimeString('en-GB', { hour12: false }) + '.' + String(d.getMilliseconds()).padStart(3,'0');
+}
+
+function formatDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-GB', { day:'2-digit', month:'short' }) + ' ' + formatTime(iso);
+}
+
+function shortTxn(txn) { return txn ? txn.slice(0, 12) + '...' : ''; }
+
+function syntaxHighlight(json) {
+  if (typeof json !== 'string') json = JSON.stringify(json, null, 2);
+  return json.replace(/("(\\u[\da-fA-F]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, (match) => {
+    let cls = 'number';
+    if (/^"/.test(match)) {
+      cls = /:$/.test(match) ? 'key' : 'string';
+    } else if (/true|false/.test(match)) {
+      cls = 'boolean';
+    } else if (/null/.test(match)) {
+      cls = 'null';
+    }
+    return `<span class="${cls}">${match}</span>`;
+  });
+}
+
+// ── Fetch ──
+async function fetchCallbacks() {
+  try {
+    const resp = await fetch(`${getBase()}/api/callbacks`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    allCallbacks = await resp.json();
+    document.getElementById('countBadge').textContent = `${allCallbacks.length} callbacks`;
+    setStatus(true);
+    render();
+  } catch (e) {
+    setStatus(false, e.message);
+  }
+}
+
+function setStatus(ok, msg) {
+  const dot = document.getElementById('statusDot');
+  const txt = document.getElementById('statusText');
+  if (ok) {
+    dot.className = 'status-dot live';
+    txt.textContent = paused ? 'paused' : 'live';
+  } else {
+    dot.className = 'status-dot off';
+    txt.textContent = msg || 'error';
+  }
+}
+
+function fetchNow() { fetchCallbacks(); }
+
+function togglePause() {
+  paused = !paused;
+  const btn = document.getElementById('pauseBtn');
+  if (paused) {
+    clearInterval(timer);
+    timer = null;
+    btn.textContent = 'Resume';
+    btn.className = 'btn paused';
+    document.getElementById('statusDot').className = 'status-dot off';
+    document.getElementById('statusText').textContent = 'paused';
+  } else {
+    btn.textContent = 'Pause';
+    btn.className = 'btn pause';
+    startPolling();
+    fetchNow();
+  }
+}
+
+function startPolling() {
+  if (timer) clearInterval(timer);
+  timer = setInterval(() => { if (!paused) fetchCallbacks(); }, REFRESH_MS);
+}
+
+// ── Filters ──
+function renderFilters() {
+  const container = document.getElementById('filters');
+  container.innerHTML = '<span class="filter-btn' + (activeFilters.size === 0 ? ' active' : '') + '" onclick="clearFilters()">ALL</span>' +
+    ACTIONS.map(a => `<span class="filter-btn${activeFilters.has(a) ? ' active' : ''}" onclick="toggleFilter('${a}')">${a.replace('on_','')}</span>`).join('') +
+    '<span class="filter-btn' + (activeFilters.has('errors') ? ' active' : '') + '" onclick="toggleFilter(\'errors\')">errors</span>';
+}
+
+function toggleFilter(f) {
+  if (activeFilters.has(f)) activeFilters.delete(f); else activeFilters.add(f);
+  renderFilters();
+  render();
+}
+
+function clearFilters() {
+  activeFilters.clear();
+  renderFilters();
+  render();
+}
+
+// ── Group callbacks by transaction ──
+function groupByTxn(cbs) {
+  const map = new Map();
+  for (const cb of cbs) {
+    const txn = cb.transaction_id || 'unknown';
+    if (!map.has(txn)) map.set(txn, []);
+    map.get(txn).push(cb);
+  }
+  // Sort groups by most recent callback
+  return [...map.entries()].sort((a, b) => {
+    const ta = new Date(a[1][0].received_at || 0);
+    const tb = new Date(b[1][0].received_at || 0);
+    return tb - ta;
+  });
+}
+
+function filterCallbacks(cbs) {
+  if (activeFilters.size === 0) return cbs;
+  return cbs.filter(cb => {
+    if (activeFilters.has('errors') && cb.error) return true;
+    if (activeFilters.has(cb.action)) return true;
+    return false;
+  });
+}
+
+// ── Render ──
+function render() {
+  const filtered = filterCallbacks(allCallbacks);
+  const groups = groupByTxn(filtered);
+  renderSidebar(groups);
+
+  if (selectedTxn) {
+    const txnCallbacks = filtered.filter(cb => cb.transaction_id === selectedTxn);
+    if (txnCallbacks.length > 0) {
+      renderDetail(selectedTxn, txnCallbacks);
+    } else {
+      renderAllTimeline(filtered);
+    }
+  } else {
+    renderAllTimeline(filtered);
+  }
+}
+
+function renderSidebar(groups) {
+  const container = document.getElementById('sidebarContent');
+  if (groups.length === 0) {
+    container.innerHTML = '<div style="padding:20px;color:var(--text2);text-align:center;">No callbacks yet</div>';
+    return;
+  }
+
+  container.innerHTML = groups.map(([txn, cbs]) => {
+    const isActive = selectedTxn === txn ? ' active' : '';
+    const hasError = cbs.some(cb => cb.error);
+    const lastTime = cbs[0].received_at;
+    const actions = [...new Set(cbs.map(cb => cb.action))];
+    return `
+      <div class="txn-item${isActive}" onclick="selectTxn('${txn}')">
+        <div class="txn-id">${shortTxn(txn)}</div>
+        <div class="txn-actions">
+          ${actions.map(a => `<span class="action-chip ${a}">${a.replace('on_','')}</span>`).join('')}
+          ${hasError ? '<span class="action-chip error">ERR</span>' : ''}
+        </div>
+        <div class="txn-time">${formatDate(lastTime)}</div>
+      </div>`;
+  }).join('');
+}
+
+function selectTxn(txn) {
+  selectedTxn = selectedTxn === txn ? null : txn;
+  render();
+}
+
+function renderAllTimeline(cbs) {
+  const main = document.getElementById('mainContent');
+  if (cbs.length === 0) {
+    main.innerHTML = '<div class="empty-state"><div class="icon">&#9673;</div><p>No callbacks match filters</p></div>';
+    return;
+  }
+
+  main.innerHTML = `
+    <div class="section">
+      <div class="section-title">All Callbacks (${cbs.length})</div>
+      ${cbs.map(cb => `
+        <div class="timeline-card" onclick="selectTxn('${cb.transaction_id}')">
+          <span class="action-chip ${cb.action}">${cb.action.replace('on_','')}</span>
+          ${cb.error ? '<span class="action-chip error">ERR</span>' : ''}
+          <span class="timeline-txn">${shortTxn(cb.transaction_id)}</span>
+          <span class="timeline-time">${formatTime(cb.received_at)}</span>
+        </div>
+      `).join('')}
+    </div>`;
+}
+
+function renderDetail(txn, cbs) {
+  const main = document.getElementById('mainContent');
+  const sorted = [...cbs].sort((a, b) => new Date(a.received_at) - new Date(b.received_at));
+
+  main.innerHTML = `
+    <div class="section">
+      <div class="section-title" style="display:flex;align-items:center;gap:8px;">
+        <span style="cursor:pointer;color:var(--blue);" onclick="selectTxn(null)">&larr; back</span>
+        Transaction: ${txn}
+      </div>
+
+      ${sorted.map((cb, i) => {
+        const hasError = cb.error != null;
+        return `
+        <div class="callback-card">
+          <div class="callback-header" onclick="toggleCard(this)">
+            <span class="callback-num">#${i + 1}</span>
+            <span class="action-chip ${cb.action}">${cb.action.replace('on_','')}</span>
+            ${hasError ? '<span class="action-chip error">ERROR</span>' : ''}
+            <span class="callback-time">${formatDate(cb.received_at)}</span>
+          </div>
+          <div class="callback-body">
+            ${hasError ? `
+              <div class="json-section">
+                <div class="json-label">Error</div>
+                <div class="error-banner">${syntaxHighlight(JSON.stringify(cb.error, null, 2))}</div>
+              </div>` : ''}
+            <div class="json-section">
+              <div class="json-label">Context</div>
+              <div class="json-block">${syntaxHighlight(JSON.stringify(cb.context, null, 2))}</div>
+            </div>
+            <div class="json-section">
+              <div class="json-label">Message</div>
+              <div class="json-block">${syntaxHighlight(JSON.stringify(cb.message, null, 2))}</div>
+            </div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+}
+
+function toggleCard(header) {
+  const body = header.nextElementSibling;
+  body.classList.toggle('open');
+}
+
+// ── Init ──
+renderFilters();
+fetchCallbacks();
+startPolling();
+</script>
+</body>
+</html>

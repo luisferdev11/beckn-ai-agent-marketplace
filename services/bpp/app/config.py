@@ -14,7 +14,7 @@ SERVICE_NAME = os.getenv("SERVICE_NAME", "bpp-ai")
 BPP_CALLBACK_URL = os.getenv("BPP_CALLBACK_URL", "http://onix-bpp:8082/bpp/caller")
 
 # URL of the orchestrator service — where we delegate agent execution
-ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:3003")
+ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:3008")
 
 # URL of the marketplace CDS — where we POST rating ingest events so the
 # discover quality component reflects new ratings without us writing

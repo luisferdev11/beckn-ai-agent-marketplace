@@ -34,6 +34,7 @@ from app.llm_client import GroqClient
 logger = logging.getLogger(__name__)
 
 llm = GroqClient()
+_http_client = httpx.AsyncClient(timeout=30.0)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -84,13 +85,15 @@ async def _call_agent(endpoint: str, payload: dict, timeout_ms: int = 30000) -> 
 
     for attempt in range(1 + AGENT_MAX_RETRIES):
         try:
-            async with httpx.AsyncClient(timeout=timeout_s) as client:
-                resp = await client.post(endpoint, json=payload)
+            resp = await _http_client.post(endpoint, json=payload, timeout=timeout_s)
             if 200 <= resp.status_code < 300:
                 if not resp.content:
                     return {"status": "success", "result": {"success": True}, "error": None, "usage": {}}
                 body = resp.json()
                 return _normalize_agent_response(body)
+            # 4xx = payload/client error — retrying won't help
+            if 400 <= resp.status_code < 500:
+                raise RuntimeError(f"AGENT HTTP {resp.status_code}: {resp.text[:200]}")
             last_error = RuntimeError(f"AGENT HTTP {resp.status_code}: {resp.text[:200]}")
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
             last_error = exc
@@ -156,6 +159,7 @@ async def _execute_step(
     record.step_statuses[step_id] = StepStatus.RUNNING
     attempts = 0
     fix_instructions = ""
+    agent_result = None  # ensure defined even if all rounds exit via agent-error continue
 
     for validation_round in range(1 + VALIDATION_MAX_RETRIES):
         # ── DEFINE_PROMPT ─────────────────────────────────────────────
@@ -190,6 +194,12 @@ async def _execute_step(
                 step_id=step_id, attempt=attempts, error=str(exc), timestamp=time.time(),
             ))
             _log_conversation(record, "EXECUTE_AGENT_FAILED", step_id, {"error": str(exc)})
+            # If retries remain, let the LLM rebuild the payload
+            if validation_round < VALIDATION_MAX_RETRIES:
+                fix_instructions = f"Agent call failed: {exc}. Rebuild the payload to fix this."
+                logger.warning("[%s][%s] Agent call failed (round %d/%d) — will retry with corrected payload",
+                               record.execution_id, step_id, validation_round + 1, 1 + VALIDATION_MAX_RETRIES)
+                continue
             record.step_statuses[step_id] = StepStatus.FAILED
             return
 
@@ -206,8 +216,11 @@ async def _execute_step(
                 step_id=step_id, attempt=attempts, error=str(error_msg), timestamp=time.time(),
             ))
             _log_conversation(record, "AGENT_ERROR", step_id, {"error": error_msg})
-            record.step_statuses[step_id] = StepStatus.FAILED
-            return
+            # Let the LLM rebuild the payload with the error as fix_instructions
+            fix_instructions = f"Agent rejected the payload with error: {error_msg}. Rebuild the payload to fix this."
+            logger.warning("[%s][%s] Agent error (round %d/%d): %s — will retry with corrected payload",
+                           record.execution_id, step_id, validation_round + 1, 1 + VALIDATION_MAX_RETRIES, error_msg)
+            continue
 
         agent_result = agent_response.get("result")
 
@@ -243,7 +256,35 @@ async def _execute_step(
             verdict.get("reason", ""),
         )
 
-    # All validation retries exhausted
+    # All validation retries exhausted — attempt to reshape the last response
+    # via the LLM rather than failing outright. The agent's code is fixed so
+    # retrying the same call won't change its output format.
+    if agent_result is not None and output_schema:
+        logger.info("[%s][%s] Attempting LLM reshape of agent output to match outputSchema",
+                     record.execution_id, step_id)
+        _log_conversation(record, "RESHAPE_ATTEMPT", step_id,
+                          {"agent_result": agent_result, "output_schema": output_schema})
+        try:
+            reshaped = await llm.reshape_output(
+                output_schema=output_schema,
+                agent_response=agent_result,
+                step_note=step_note,
+            )
+            if reshaped:
+                record.completed_steps[step_id] = CompletedStep(
+                    output=reshaped,
+                    step_note=step_note,
+                    attempts=attempts,
+                    timestamp=time.time(),
+                )
+                record.step_statuses[step_id] = StepStatus.SUCCESS
+                logger.info("[%s][%s] Reshape succeeded — step marked SUCCESS", record.execution_id, step_id)
+                _log_conversation(record, "RESHAPE_SUCCESS", step_id, {"reshaped": reshaped})
+                return
+        except Exception as exc:
+            logger.warning("[%s][%s] Reshape failed: %s", record.execution_id, step_id, exc)
+            _log_conversation(record, "RESHAPE_FAILED", step_id, {"error": str(exc)})
+
     record.error_log.append(ErrorEntry(
         step_id=step_id, attempt=attempts,
         error=f"Validation failed after {1 + VALIDATION_MAX_RETRIES} rounds",
@@ -335,8 +376,14 @@ async def run_plan(record: OrchestrationRecord) -> None:
             step_status = record.step_statuses.get(sid, StepStatus.PENDING)
             cs = record.completed_steps.get(sid)
             note = None
-            if step_status == StepStatus.SKIPPED:
-                note = "skipped — dependency failed"
+            if step_status == StepStatus.FAILED:
+                # Surface the actual error from error_log
+                step_errors = [e.error for e in record.error_log if e.step_id == sid]
+                note = step_errors[-1] if step_errors else "unknown failure"
+            elif step_status == StepStatus.SKIPPED:
+                failed_deps = [d for d in s.get("dependsOn", [])
+                               if record.step_statuses.get(d) in (StepStatus.FAILED, StepStatus.SKIPPED)]
+                note = f"Dependency failed: {failed_deps}" if failed_deps else "skipped — dependency failed"
             elif cs and cs.output == {"success": True}:
                 note = "side-effect only, no output"
 
@@ -349,6 +396,21 @@ async def run_plan(record: OrchestrationRecord) -> None:
             })
 
         record.execution_summary = execution_summary
+
+        # ── SYNTHESIZE — convert raw JSON result to human-readable text ──
+        if result and any(s == StepStatus.SUCCESS for s in record.step_statuses.values()):
+            try:
+                synthesized = await llm.synthesize(
+                    goal=goal,
+                    prompt=record.prompt,
+                    raw_result=result,
+                )
+                if synthesized:
+                    result = {"raw": result, **synthesized}
+                    _log_conversation(record, "SYNTHESIZE", None, {"synthesized_keys": list(synthesized.keys()) if isinstance(synthesized, dict) else "text"})
+            except Exception as exc:
+                logger.warning("[%s] Synthesize failed, returning raw result: %s", execution_id, exc)
+
         record.result = result
 
         # Determine final status

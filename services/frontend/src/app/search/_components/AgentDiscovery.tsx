@@ -111,6 +111,8 @@ export function AgentDiscovery({ header }: { header?: ReactNode }) {
   const [planResult, setPlanResult] = useState<Plan | null>(null);
   const [planTxnIds, setPlanTxnIds] = useState<string[]>([]);
   const [pipelineRunning, setPipelineRunning] = useState(false);
+  const [pipelineInput, setPipelineInput] = useState<Record<string, string>>({});
+  const [pipelineFiles, setPipelineFiles] = useState<Record<string, { name: string; content: string }>>({});
   const resultsRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -163,9 +165,19 @@ export function AgentDiscovery({ header }: { header?: ReactNode }) {
     setPipelineRunning(true);
     setError(null);
     try {
-      // Send the raw query as pipeline input under a "text" key.
-      // Future iteration: show a form for structured fields based on input_mapping.
-      const userInput: Record<string, string> = { text: query.trim() };
+      // Use structured data from the pipeline input form.
+      // Keys match the input_mapping fields from layer-0 steps.
+      const userInput: Record<string, string> = { ...pipelineInput };
+      // Merge uploaded file content into the pipeline input.
+      // If the user also typed instructions in the textarea, prepend them.
+      for (const [key, file] of Object.entries(pipelineFiles)) {
+        const instructions = (pipelineInput[key] || '').trim();
+        userInput[key] = instructions
+          ? `${instructions}\n\n---\n\n${file.content}`
+          : file.content;
+      }
+      // Always send format as plain text
+      userInput['format'] = 'plain text';
       const result = await runPipeline(planResult, query.trim(), userInput, planTxnIds);
 
       // Store pipeline result in sessionStorage for the result page
@@ -199,6 +211,7 @@ export function AgentDiscovery({ header }: { header?: ReactNode }) {
     setHasSearched(false);
     setAgents([]);
     setPlanResult(null);
+    setPipelineInput({});
     setError(null);
     setFilters(DEFAULT_FILTERS);
     setTimeout(() => inputRef.current?.focus(), 50);
@@ -533,7 +546,7 @@ export function AgentDiscovery({ header }: { header?: ReactNode }) {
               ) : error ? (
                 <ErrorState message={error} onRetry={handleSearch} />
               ) : planResult ? (
-                <PlanResults plan={planResult} onRun={handleRunPipeline} running={pipelineRunning} />
+                <PlanResults plan={planResult} onRun={handleRunPipeline} running={pipelineRunning} pipelineInput={pipelineInput} onInputChange={setPipelineInput} pipelineFiles={pipelineFiles} onFilesChange={setPipelineFiles} onPlanChange={setPlanResult} />
               ) : (
                 <PlanEmptyState />
               )
@@ -753,8 +766,37 @@ function EmptyState({ onClear }: { onClear: () => void }) {
 
 // ── Planner result components ──────────────────────────────
 
-function PlanResults({ plan, onRun, running }: { plan: Plan; onRun: () => void; running?: boolean }) {
+function PlanResults({ plan, onRun, running, pipelineInput, onInputChange, pipelineFiles, onFilesChange, onPlanChange }: {
+  plan: Plan;
+  onRun: () => void;
+  running?: boolean;
+  pipelineInput: Record<string, string>;
+  onInputChange: (input: Record<string, string>) => void;
+  pipelineFiles: Record<string, { name: string; content: string }>;
+  onFilesChange: (files: Record<string, { name: string; content: string }>) => void;
+  onPlanChange: (plan: Plan) => void;
+}) {
   const totalSeconds = (plan.estimates.max_latency_ms / 1000).toFixed(plan.estimates.max_latency_ms < 10000 ? 1 : 0);
+
+  // Derive required input fields from layer-0 steps (no dependencies).
+  // Each $pipeline_input.X reference means the user must provide field X.
+  // Filter out 'format' — always hardcoded to "plain text".
+  const requiredFields = useMemo(() => {
+    const fields: { key: string; label: string; stepName: string }[] = [];
+    const seen = new Set<string>();
+    for (const step of plan.steps) {
+      if (step.depends_on.length > 0) continue;
+      for (const [key, source] of Object.entries(step.input_mapping)) {
+        if (key === 'format') continue;
+        if (typeof source === 'string' && source.startsWith('$pipeline_input.') && !seen.has(key)) {
+          seen.add(key);
+          fields.push({ key, label: key, stepName: step.recommended.name });
+        }
+      }
+    }
+    return fields;
+  }, [plan.steps]);
+
   return (
     <div style={{ animation: 'fadeInUp 0.4s ease-out both' }}>
       {/* Plan summary hero */}
@@ -805,9 +847,51 @@ function PlanResults({ plan, onRun, running }: { plan: Plan; onRun: () => void; 
             step={step}
             index={i}
             isLast={i === plan.steps.length - 1}
+            onSwapAgent={(stepId, altAgentId) => {
+              const newSteps = plan.steps.map(s => {
+                if (s.id !== stepId) return s;
+                const altIdx = s.alternatives.findIndex(a => a.agent_id === altAgentId);
+                if (altIdx === -1) return s;
+                const alt = s.alternatives[altIdx];
+                const oldRec = s.recommended;
+                // Swap: promote alternative to recommended, demote current to alternatives.
+                // Keep the step's reason static — it describes the step, not the agent.
+                return {
+                  ...s,
+                  recommended: {
+                    agent_id: alt.agent_id,
+                    name: alt.name,
+                    provider: alt.name,
+                    cost: alt.cost,
+                    currency: oldRec.currency,
+                    latency_ms: alt.latency_ms,
+                    reason: s.recommended.reason,
+                  },
+                  alternatives: [
+                    ...s.alternatives.slice(0, altIdx),
+                    ...s.alternatives.slice(altIdx + 1),
+                    { agent_id: oldRec.agent_id, name: oldRec.name, cost: oldRec.cost, latency_ms: oldRec.latency_ms, note: alt.note },
+                  ],
+                };
+              });
+              const newPlan = { ...plan, steps: newSteps };
+              onPlanChange(newPlan);
+            }}
           />
         ))}
       </div>
+
+      {/* Data input form */}
+      {requiredFields.length > 0 && (
+        <PipelineDataForm
+          fields={requiredFields}
+          values={pipelineInput}
+          onChange={onInputChange}
+          files={pipelineFiles}
+          onFilesChange={onFilesChange}
+          disabled={!!running}
+        />
+      )}
 
       {/* Run pipeline */}
       <div style={{
@@ -817,13 +901,13 @@ function PlanResults({ plan, onRun, running }: { plan: Plan; onRun: () => void; 
       }}>
         <button
           onClick={onRun}
-          disabled={running}
+          disabled={!!running}
           style={{
             display: 'flex', alignItems: 'center', gap: 10,
             padding: '12px 28px', borderRadius: 8,
             background: running ? 'var(--text-tertiary)' : 'var(--infosys-cobalt)', color: '#fff', border: 'none',
             fontFamily: 'var(--font-plex)', fontSize: 14, fontWeight: 600,
-            cursor: running ? 'wait' : 'pointer', transition: 'all 0.15s',
+            cursor: running ? 'not-allowed' : 'pointer', transition: 'all 0.15s',
             boxShadow: '0 4px 16px rgba(0,124,195,0.35)',
             opacity: running ? 0.7 : 1,
           }}
@@ -850,6 +934,279 @@ function PlanResults({ plan, onRun, running }: { plan: Plan; onRun: () => void; 
   );
 }
 
+const FIELD_LABELS: Record<string, string> = {
+  document: 'Document content',
+  text: 'Text input',
+  code: 'Code',
+  prompt: 'Prompt',
+  language: 'Language',
+  context: 'Additional context',
+  format: 'Format',
+};
+
+const TEXT_FILE_EXTENSIONS = ['.txt', '.md', '.json', '.py', '.js', '.ts', '.jsx', '.tsx', '.html', '.css', '.csv', '.xml', '.yaml', '.yml', '.sql', '.sh', '.go', '.rs', '.java', '.c', '.cpp', '.h', '.rb', '.php', '.swift', '.kt', '.pdf'];
+
+async function extractPdfText(file: File): Promise<string> {
+  const pdfjsLib = await import('pdfjs-dist');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const pages: string[] = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    pages.push(content.items.map((item: any) => item.str).join(' '));
+  }
+  return pages.join('\n\n');
+}
+
+function PipelineDataForm({ fields, values, onChange, files, onFilesChange, disabled }: {
+  fields: { key: string; label: string; stepName: string }[];
+  values: Record<string, string>;
+  onChange: (v: Record<string, string>) => void;
+  files: Record<string, { name: string; content: string }>;
+  onFilesChange: (files: Record<string, { name: string; content: string }>) => void;
+  disabled: boolean;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
+
+  function handleTextChange(key: string, text: string) {
+    onChange({ ...values, [key]: text });
+  }
+
+  function handleRemoveFile(key: string) {
+    const next = { ...files };
+    delete next[key];
+    onFilesChange(next);
+  }
+
+  async function handleFileUpload(key: string, e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFileError(null);
+
+    if (file.name.toLowerCase().endsWith('.pdf')) {
+      setLoading(true);
+      try {
+        const text = await extractPdfText(file);
+        if (!text.trim()) {
+          setFileError(`The PDF "${file.name}" contains no extractable text. It may be a scanned image — try a text-based PDF.`);
+        } else {
+          onFilesChange({ ...files, [key]: { name: file.name, content: text } });
+        }
+      } catch (err) {
+        console.error('PDF extraction failed:', err);
+        setFileError(`Failed to read "${file.name}": ${err instanceof Error ? err.message : 'unknown error'}`);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const content = reader.result as string;
+      onFilesChange({ ...files, [key]: { name: file.name, content } });
+    };
+    reader.onerror = () => {
+      setFileError(`Failed to read "${file.name}".`);
+    };
+    reader.readAsText(file);
+  }
+
+  return (
+    <div style={{
+      marginTop: 28,
+      background: 'var(--bg-surface)',
+      border: '1px solid var(--border-subtle)',
+      borderLeft: '3px solid #E8A317',
+      borderRadius: 8,
+      padding: '20px 24px',
+      animation: 'fadeInUp 0.3s ease-out both',
+    }}>
+      <div style={{
+        display: 'inline-flex', alignItems: 'center', gap: 8,
+        padding: '3px 10px', borderRadius: 4,
+        background: 'rgba(232,163,23,0.1)',
+        border: '1px solid rgba(232,163,23,0.25)',
+        marginBottom: 14,
+      }}>
+        <span style={{
+          fontSize: 10, fontWeight: 700, color: '#B8860B',
+          letterSpacing: '0.08em', fontFamily: 'var(--font-mono)',
+        }}>
+          PIPELINE INPUT
+        </span>
+      </div>
+      <p style={{
+        fontSize: 13, color: 'var(--text-secondary)', fontFamily: 'var(--font-plex)',
+        marginBottom: 18, lineHeight: 1.5,
+      }}>
+        Provide the data for your pipeline. Paste text or upload a file.
+      </p>
+
+      {fields.map(field => (
+        <div key={field.key} style={{ marginBottom: 16 }}>
+          <label style={{
+            display: 'block', marginBottom: 6,
+            fontSize: 12, fontWeight: 600, color: 'var(--text-primary)',
+            fontFamily: 'var(--font-plex)', letterSpacing: '0.02em',
+          }}>
+            {FIELD_LABELS[field.key] || field.key}
+            <span style={{ fontWeight: 400, color: 'var(--text-tertiary)', marginLeft: 8, fontSize: 11 }}>
+              for {field.stepName}
+            </span>
+          </label>
+
+          {/* File chip — shown when a file has been uploaded */}
+          {files[field.key] && (
+            <div style={{
+              display: 'inline-flex', alignItems: 'center', gap: 8,
+              padding: '8px 14px', borderRadius: 8,
+              background: 'rgba(0,124,195,0.08)',
+              border: '1px solid rgba(0,124,195,0.25)',
+              marginBottom: 10,
+            }}>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                <path d="M4 1h5.5L13 4.5V14a1 1 0 01-1 1H4a1 1 0 01-1-1V2a1 1 0 011-1z" stroke="var(--infosys-cobalt)" strokeWidth="1.2" />
+                <path d="M9 1v4h4" stroke="var(--infosys-cobalt)" strokeWidth="1.2" />
+              </svg>
+              <span style={{
+                fontSize: 12, fontWeight: 500, color: 'var(--text-primary)',
+                fontFamily: 'var(--font-plex)',
+              }}>
+                {files[field.key].name}
+              </span>
+              <span style={{
+                fontSize: 11, color: 'var(--text-tertiary)',
+                fontFamily: 'var(--font-mono)',
+              }}>
+                {files[field.key].content.length.toLocaleString()} chars
+              </span>
+              {!disabled && (
+                <button
+                  onClick={() => handleRemoveFile(field.key)}
+                  style={{
+                    background: 'none', border: 'none', padding: '2px',
+                    cursor: 'pointer', color: 'var(--text-tertiary)',
+                    display: 'flex', alignItems: 'center',
+                    borderRadius: 4, transition: 'color 0.15s',
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.color = '#f85149'; }}
+                  onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-tertiary)'; }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Textarea — always visible for instructions or pasting text */}
+          <textarea
+            value={values[field.key] || ''}
+            onChange={e => handleTextChange(field.key, e.target.value)}
+            disabled={disabled}
+            placeholder={files[field.key]
+              ? 'Add instructions for this document (optional)...'
+              : `Paste ${field.key} content here...`}
+            rows={files[field.key] ? 3 : 6}
+            style={{
+              width: '100%', padding: '10px 12px', borderRadius: 6,
+              border: '1px solid var(--border-default)',
+              background: disabled ? 'var(--bg-elevated)' : 'var(--bg-surface)',
+              color: 'var(--text-primary)',
+              fontFamily: 'var(--font-mono)', fontSize: 13,
+              lineHeight: 1.55, resize: 'vertical',
+              outline: 'none',
+              transition: 'border-color 0.15s',
+              opacity: disabled ? 0.6 : 1,
+            }}
+            onFocus={e => { e.currentTarget.style.borderColor = 'var(--infosys-cobalt)'; }}
+            onBlur={e => { e.currentTarget.style.borderColor = 'var(--border-default)'; }}
+          />
+
+          {/* Upload button */}
+          <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 10 }}>
+            <label style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '5px 12px', borderRadius: 5,
+              background: 'var(--bg-elevated)',
+              border: '1px solid var(--border-subtle)',
+              color: 'var(--text-secondary)',
+              fontFamily: 'var(--font-plex)', fontSize: 12, fontWeight: 500,
+              cursor: disabled ? 'not-allowed' : 'pointer',
+              transition: 'all 0.15s',
+            }}>
+              <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+                <path d="M7 1v12M1 7h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+              {loading ? 'Reading file...' : files[field.key] ? 'Replace file' : 'Upload file'}
+              <input
+                type="file"
+                accept={[...TEXT_FILE_EXTENSIONS, '.pdf'].join(',')}
+                onChange={e => handleFileUpload(field.key, e)}
+                disabled={disabled || loading}
+                style={{ display: 'none' }}
+              />
+            </label>
+          </div>
+        </div>
+      ))}
+
+      {/* ── Error popup ── */}
+      {fileError && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)',
+        }} onClick={() => setFileError(null)}>
+          <div
+            style={{
+              background: 'var(--bg-surface, #1a1f2e)',
+              border: '1px solid #f85149',
+              borderRadius: 12,
+              padding: '24px 28px',
+              maxWidth: 440,
+              width: '90%',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+              animation: 'fadeInUp 0.2s ease-out',
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <circle cx="10" cy="10" r="9" stroke="#f85149" strokeWidth="1.5" />
+                <path d="M10 6v5M10 13.5v.5" stroke="#f85149" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+              <span style={{
+                fontSize: 14, fontWeight: 600, color: '#f85149',
+                fontFamily: 'var(--font-plex)',
+              }}>File Upload Error</span>
+            </div>
+            <p style={{
+              fontSize: 13, color: 'var(--text-secondary, #a0a8b8)',
+              fontFamily: 'var(--font-plex)', lineHeight: 1.6, marginBottom: 18,
+            }}>{fileError}</p>
+            <button
+              onClick={() => setFileError(null)}
+              style={{
+                background: '#f85149', color: '#fff', border: 'none',
+                padding: '8px 20px', borderRadius: 6, fontSize: 13,
+                fontWeight: 600, fontFamily: 'var(--font-plex)',
+                cursor: 'pointer', float: 'right',
+              }}
+            >Dismiss</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PlanStat({ label, value }: { label: string; value: string }) {
   return (
     <div>
@@ -870,7 +1227,7 @@ function PlanStat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function PlanStepCard({ step, index, isLast }: { step: PlanStep; index: number; isLast: boolean }) {
+function PlanStepCard({ step, index, isLast, onSwapAgent }: { step: PlanStep; index: number; isLast: boolean; onSwapAgent: (stepId: string, altAgentId: string) => void }) {
   const [altOpen, setAltOpen] = useState(false);
   const rec = step.recommended;
   const latencySec = rec.latency_ms >= 1000
@@ -1050,18 +1407,42 @@ function PlanStepCard({ step, index, isLast }: { step: PlanStep; index: number; 
                     <div key={alt.agent_id} style={{
                       fontSize: 12, fontFamily: 'var(--font-plex)',
                       color: 'var(--text-secondary)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      gap: 8,
                     }}>
-                      <div style={{ display: 'flex', gap: 10, alignItems: 'baseline' }}>
-                        <strong style={{ color: 'var(--text-primary)' }}>{alt.name}</strong>
-                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>
-                          {rec.currency} {alt.cost.toFixed(2)} · {alt.latency_ms >= 1000 ? `${(alt.latency_ms / 1000).toFixed(1)}s` : `${alt.latency_ms}ms`}
-                        </span>
-                      </div>
-                      {alt.note && (
-                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>
-                          {alt.note}
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', gap: 10, alignItems: 'baseline' }}>
+                          <strong style={{ color: 'var(--text-primary)' }}>{alt.name}</strong>
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+                            {rec.currency} {alt.cost.toFixed(2)} · {alt.latency_ms >= 1000 ? `${(alt.latency_ms / 1000).toFixed(1)}s` : `${alt.latency_ms}ms`}
+                          </span>
                         </div>
-                      )}
+                        {alt.note && (
+                          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>
+                            {alt.note}
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => onSwapAgent(step.id, alt.agent_id)}
+                        style={{
+                          background: 'transparent',
+                          border: '1px solid var(--infosys-cobalt)',
+                          color: 'var(--infosys-cobalt)',
+                          padding: '3px 10px',
+                          borderRadius: 4,
+                          fontFamily: 'var(--font-plex)',
+                          fontSize: 11,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          whiteSpace: 'nowrap',
+                          transition: 'all 0.15s',
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.background = 'var(--infosys-cobalt)'; e.currentTarget.style.color = '#fff'; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--infosys-cobalt)'; }}
+                      >
+                        Use this
+                      </button>
                     </div>
                   ))}
                 </div>

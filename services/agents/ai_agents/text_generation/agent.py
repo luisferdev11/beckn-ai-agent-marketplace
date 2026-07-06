@@ -39,7 +39,7 @@ async def run_task(payload: dict) -> tuple:
     """Run a text generation task. Returns (result, usage)."""
     _metrics["total_requests"] += 1
 
-    prompt = payload.get("prompt", payload.get("text", payload.get("code", "")))
+    prompt = payload.get("prompt", payload.get("text", payload.get("code", payload.get("document", ""))))
     if not prompt:
         _metrics["failed_requests"] += 1
         raise ValueError("No prompt provided. Send {\"prompt\": \"your question\"}")

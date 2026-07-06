@@ -75,6 +75,11 @@ IMPORTANT: Do NOT second-guess the agent's domain logic. If the output \
 structure matches the schema and the values are coherent with the task \
 described in agent_payload and step_note, mark it as valid.
 
+IMPORTANT: Extra fields beyond those declared in output_schema are ALWAYS \
+acceptable. Only reject if REQUIRED fields are missing, have the wrong type, \
+or the values are semantically incoherent with the task. Never reject solely \
+because the response contains additional fields.
+
 Return a JSON object with exactly these fields:
 - valid: boolean
 - reason: string explaining your assessment
@@ -137,8 +142,11 @@ class GroqClient:
             {"id": s["id"], "agent": s["agent"], "rationale": s.get("rationale", "")}
             for s in steps
         ]
-        data_keys = list(data.keys()) if isinstance(data, dict) else []
-        data_summary = f"Keys: {data_keys}, sample values truncated for brevity."
+        if isinstance(data, dict):
+            data_preview = {k: str(v)[:300] for k, v in data.items()}
+            data_summary = f"Data fields with previews: {json.dumps(data_preview, ensure_ascii=False)}"
+        else:
+            data_summary = f"Data: {str(data)[:300]}"
 
         user_msg = json.dumps({
             "goal": goal,
@@ -228,6 +236,86 @@ class GroqClient:
             "reason": f"Schema validation failed: {vr.error_message}",
             "fix_instructions": f"Agent response does not match output schema: {vr.error_message}",
         }
+
+    # ── 4. RESHAPE_OUTPUT ────────────────────────────────────────────────
+
+    async def reshape_output(
+        self,
+        output_schema: dict,
+        agent_response: Any,
+        step_note: str,
+    ) -> dict | None:
+        """Ask the LLM to transform an agent's raw response to match the expected outputSchema.
+
+        Used as a last resort when the agent returns valid content but in the
+        wrong shape (e.g. {text: "..."} instead of {fields: {}, raw_text: ""}).
+        Returns the reshaped dict, or None on failure.
+        """
+        system = (
+            "You are a data transformer. An AI agent produced a valid response but "
+            "in a different structure than expected. Your job is to reshape the agent's "
+            "response to match the target output_schema.\n\n"
+            "Rules:\n"
+            "- Extract all relevant information from the agent_response\n"
+            "- Map it to the fields defined in output_schema\n"
+            "- All required fields in output_schema MUST be present\n"
+            "- Preserve the actual content, just restructure it\n"
+            "- If the agent returned free text, parse it intelligently to fill structured fields\n"
+            "- Return ONLY the reshaped JSON object. No wrapping, no explanation."
+        )
+        user_msg = json.dumps({
+            "output_schema": output_schema,
+            "agent_response": agent_response,
+            "step_note": step_note,
+        }, ensure_ascii=False)
+
+        try:
+            result = await self._call(system, user_msg, label="RESHAPE_OUTPUT")
+            return result if isinstance(result, dict) else None
+        except RuntimeError:
+            logger.warning("RESHAPE_OUTPUT LLM call failed")
+            return None
+
+
+    # ── 5. SYNTHESIZE ──────────────────────────────────────────────────
+
+    async def synthesize(
+        self,
+        goal: str,
+        prompt: str,
+        raw_result: Any,
+    ) -> dict | None:
+        """Convert raw structured agent output into a human-readable response.
+
+        Returns {"response": "human readable text"} or None on failure.
+        """
+        system = (
+            "You are the final output formatter for an AI agent pipeline. "
+            "The user asked for something and the pipeline produced structured data. "
+            "Your job is to present the result as a clear, readable response.\n\n"
+            "Rules:\n"
+            "- Write a natural, well-formatted response that directly answers what the user asked\n"
+            "- Use bullet points, numbered lists, or paragraphs as appropriate\n"
+            "- Do NOT show raw JSON, field names, or technical structure\n"
+            "- Do NOT mention agents, pipelines, steps, or internal mechanics\n"
+            "- Include ALL relevant information from the data — do not omit details\n"
+            "- Respond in the same language the user wrote in\n"
+            "- Return a JSON object with a single field: {\"response\": \"your formatted text\"}"
+        )
+        user_msg = json.dumps({
+            "user_request": prompt,
+            "goal": goal,
+            "raw_result": raw_result,
+        }, ensure_ascii=False)
+
+        try:
+            result = await self._call(system, user_msg, label="SYNTHESIZE")
+            if isinstance(result, dict) and "response" in result:
+                return result
+            return None
+        except RuntimeError:
+            logger.warning("SYNTHESIZE LLM call failed — returning raw result")
+            return None
 
     @staticmethod
     def _summarize_steps(completed_steps: dict[str, Any]) -> dict:
